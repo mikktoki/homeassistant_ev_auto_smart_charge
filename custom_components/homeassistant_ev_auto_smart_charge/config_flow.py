@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 import voluptuous as vol
 
 from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN
@@ -15,6 +13,8 @@ from homeassistant.config_entries import (
 )
 from homeassistant.core import callback
 from homeassistant.helpers.selector import (
+    DeviceSelector,
+    DeviceSelectorConfig,
     EntitySelector,
     EntitySelectorConfig,
     NumberSelector,
@@ -32,79 +32,51 @@ from .const import (
     CONF_CHARGER_POWER_KW,
     CONF_CHARGE_PRIORITY,
     CONF_EV1_CAPACITY_KWH,
-    CONF_EV1_HOME_ENTITY,
-    CONF_EV1_SOC_SENSOR,
-    CONF_EV1_TARGET_SOC_SENSOR,
+    CONF_EV1_DEVICE_ID,
     CONF_EV2_CAPACITY_KWH,
-    CONF_EV2_HOME_ENTITY,
-    CONF_EV2_SOC_SENSOR,
-    CONF_EV2_TARGET_SOC_SENSOR,
+    CONF_EV2_DEVICE_ID,
     CONF_PRICE_SENSOR,
     CONF_TARGET_SOC_PERCENT,
     DEFAULT_CHARGE_PRIORITY,
     DEFAULT_CHARGER_KW,
+    DEFAULT_EV1_CAPACITY_KWH,
+    DEFAULT_EV2_CAPACITY_KWH,
     DEFAULT_TARGET_SOC,
     DOMAIN,
-)
-
-_TARGET_ENTITY_DOMAINS: list[str] = [SENSOR_DOMAIN, "number", "input_number"]
-_HOME_ENTITY_DOMAINS: list[str] = [
-    "binary_sensor",
-    "device_tracker",
-    "person",
-    "input_boolean",
-]
-
-_OPTIONAL_ENTITY_KEYS = (
-    CONF_EV1_TARGET_SOC_SENSOR,
-    CONF_EV2_TARGET_SOC_SENSOR,
-    CONF_EV1_HOME_ENTITY,
-    CONF_EV2_HOME_ENTITY,
+    TESLA_DEVICE_INTEGRATIONS,
+    VW_FAMILY_DEVICE_INTEGRATIONS,
 )
 
 
-def _strip_empty_optional_entities(data: Any) -> Any:
-    """Entity selectors reject ''; optional fields must omit the key instead."""
-
-    if not isinstance(data, dict):
-        return data
-    cleaned = dict(data)
-    for key in _OPTIONAL_ENTITY_KEYS:
-        if cleaned.get(key) in (None, ""):
-            cleaned.pop(key, None)
-    return cleaned
+def _tesla_device_filter() -> list[dict[str, str]]:
+    return [{"integration": d} for d in TESLA_DEVICE_INTEGRATIONS]
 
 
-class _SchemaStripOptionalEntities(vol.Schema):
-    """Keep schema.schema as a dict (required by HA form UI); strip '' before submit."""
-
-    def __call__(self, data: Any) -> Any:
-        if isinstance(data, dict):
-            data = _strip_empty_optional_entities(dict(data))
-        return super().__call__(data)
+def _vw_family_device_filter() -> list[dict[str, str]]:
+    return [{"integration": dom} for dom in VW_FAMILY_DEVICE_INTEGRATIONS]
 
 
-def _user_schema_defaults(data: dict) -> vol.Schema:
-    return _SchemaStripOptionalEntities(
+def _user_schema(data: dict) -> vol.Schema:
+    return vol.Schema(
         {
             vol.Required(CONF_PRICE_SENSOR, default=data.get(CONF_PRICE_SENSOR, "")): EntitySelector(
                 EntitySelectorConfig(domain=SENSOR_DOMAIN)
             ),
-            vol.Required(CONF_EV1_SOC_SENSOR, default=data.get(CONF_EV1_SOC_SENSOR, "")): EntitySelector(
-                EntitySelectorConfig(domain=SENSOR_DOMAIN)
+            vol.Required(
+                CONF_EV1_DEVICE_ID,
+                default=data.get(CONF_EV1_DEVICE_ID),
+            ): DeviceSelector(
+                DeviceSelectorConfig(filter=_tesla_device_filter())
             ),
-            vol.Required(CONF_EV2_SOC_SENSOR, default=data.get(CONF_EV2_SOC_SENSOR, "")): EntitySelector(
-                EntitySelectorConfig(domain=SENSOR_DOMAIN)
-            ),
-            vol.Optional(CONF_EV1_TARGET_SOC_SENSOR): EntitySelector(
-                EntitySelectorConfig(domain=_TARGET_ENTITY_DOMAINS)
-            ),
-            vol.Optional(CONF_EV2_TARGET_SOC_SENSOR): EntitySelector(
-                EntitySelectorConfig(domain=_TARGET_ENTITY_DOMAINS)
+            vol.Required(
+                CONF_EV2_DEVICE_ID,
+                default=data.get(CONF_EV2_DEVICE_ID),
+            ): DeviceSelector(
+                DeviceSelectorConfig(filter=_vw_family_device_filter())
             ),
             vol.Required(
                 CONF_EV1_CAPACITY_KWH,
-                default=data.get(CONF_EV1_CAPACITY_KWH, 75.0),
+                default=data.get(CONF_EV1_CAPACITY_KWH, DEFAULT_EV1_CAPACITY_KWH),
             ): NumberSelector(
                 NumberSelectorConfig(
                     min=1,
@@ -115,7 +87,7 @@ def _user_schema_defaults(data: dict) -> vol.Schema:
             ),
             vol.Required(
                 CONF_EV2_CAPACITY_KWH,
-                default=data.get(CONF_EV2_CAPACITY_KWH, 77.0),
+                default=data.get(CONF_EV2_CAPACITY_KWH, DEFAULT_EV2_CAPACITY_KWH),
             ): NumberSelector(
                 NumberSelectorConfig(
                     min=1,
@@ -153,7 +125,7 @@ def _user_schema_defaults(data: dict) -> vol.Schema:
 class EvAutoSmartChargeConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle UI setup."""
 
-    VERSION = 1
+    VERSION = 2
 
     async def async_step_user(
         self, user_input: dict | None = None
@@ -161,7 +133,9 @@ class EvAutoSmartChargeConfigFlow(ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
         if user_input is not None:
             await self.async_set_unique_id(
-                f"{user_input[CONF_PRICE_SENSOR]}_{user_input[CONF_EV1_SOC_SENSOR]}_{user_input[CONF_EV2_SOC_SENSOR]}"
+                f"{user_input[CONF_PRICE_SENSOR]}_"
+                f"{user_input[CONF_EV1_DEVICE_ID]}_"
+                f"{user_input[CONF_EV2_DEVICE_ID]}"
             )
             self._abort_if_unique_id_configured()
             return self.async_create_entry(
@@ -171,7 +145,7 @@ class EvAutoSmartChargeConfigFlow(ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="user",
-            data_schema=_user_schema_defaults({}),
+            data_schema=_user_schema({}),
             errors=errors,
         )
 
@@ -184,7 +158,7 @@ class EvAutoSmartChargeConfigFlow(ConfigFlow, domain=DOMAIN):
 
 
 class EvAutoSmartChargeOptionsFlow(OptionsFlow):
-    """Adjust capacities, charger power, and target SOC."""
+    """Adjust capacities, charger power, charge order, and target fallback."""
 
     async def async_step_init(
         self, user_input: dict | None = None
@@ -193,20 +167,8 @@ class EvAutoSmartChargeOptionsFlow(OptionsFlow):
             return self.async_create_entry(title="", data=user_input)
 
         merged = {**self.config_entry.data, **self.config_entry.options}
-        schema = _SchemaStripOptionalEntities(
+        schema = vol.Schema(
             {
-                vol.Optional(CONF_EV1_TARGET_SOC_SENSOR): EntitySelector(
-                    EntitySelectorConfig(domain=_TARGET_ENTITY_DOMAINS)
-                ),
-                vol.Optional(CONF_EV2_TARGET_SOC_SENSOR): EntitySelector(
-                    EntitySelectorConfig(domain=_TARGET_ENTITY_DOMAINS)
-                ),
-                vol.Optional(CONF_EV1_HOME_ENTITY): EntitySelector(
-                    EntitySelectorConfig(domain=_HOME_ENTITY_DOMAINS)
-                ),
-                vol.Optional(CONF_EV2_HOME_ENTITY): EntitySelector(
-                    EntitySelectorConfig(domain=_HOME_ENTITY_DOMAINS)
-                ),
                 vol.Required(
                     CONF_CHARGE_PRIORITY,
                     default=merged.get(
@@ -217,11 +179,11 @@ class EvAutoSmartChargeOptionsFlow(OptionsFlow):
                         options=[
                             {
                                 "value": CHARGE_PRIORITY_EV1_FIRST,
-                                "label": "EV 1 first",
+                                "label": "EV 1 (Tesla) first",
                             },
                             {
                                 "value": CHARGE_PRIORITY_EV2_FIRST,
-                                "label": "EV 2 first",
+                                "label": "EV 2 (VW family) first",
                             },
                             {
                                 "value": CHARGE_PRIORITY_BALANCED,
@@ -233,7 +195,9 @@ class EvAutoSmartChargeOptionsFlow(OptionsFlow):
                 ),
                 vol.Required(
                     CONF_EV1_CAPACITY_KWH,
-                    default=merged.get(CONF_EV1_CAPACITY_KWH, 75.0),
+                    default=merged.get(
+                        CONF_EV1_CAPACITY_KWH, DEFAULT_EV1_CAPACITY_KWH
+                    ),
                 ): NumberSelector(
                     NumberSelectorConfig(
                         min=1,
@@ -244,7 +208,9 @@ class EvAutoSmartChargeOptionsFlow(OptionsFlow):
                 ),
                 vol.Required(
                     CONF_EV2_CAPACITY_KWH,
-                    default=merged.get(CONF_EV2_CAPACITY_KWH, 77.0),
+                    default=merged.get(
+                        CONF_EV2_CAPACITY_KWH, DEFAULT_EV2_CAPACITY_KWH
+                    ),
                 ): NumberSelector(
                     NumberSelectorConfig(
                         min=1,

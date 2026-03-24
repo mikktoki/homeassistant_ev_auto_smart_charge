@@ -22,13 +22,13 @@ from .const import (
     CONF_CHARGER_POWER_KW,
     CONF_CHARGE_PRIORITY,
     CONF_EV1_CAPACITY_KWH,
+    CONF_EV1_DEVICE_ID,
     CONF_EV1_HOME_ENTITY,
     CONF_EV1_SOC_SENSOR,
-    CONF_EV1_TARGET_SOC_SENSOR,
     CONF_EV2_CAPACITY_KWH,
+    CONF_EV2_DEVICE_ID,
     CONF_EV2_HOME_ENTITY,
     CONF_EV2_SOC_SENSOR,
-    CONF_EV2_TARGET_SOC_SENSOR,
     CONF_PRICE_SENSOR,
     CONF_TARGET_SOC_PERCENT,
     DEFAULT_CHARGE_PRIORITY,
@@ -36,6 +36,12 @@ from .const import (
     DEFAULT_TARGET_SOC,
     DOMAIN,
     UPDATE_INTERVAL_MIN,
+)
+from .device_resolve import (
+    ResolvedEVDevice,
+    entity_ids_for_device,
+    is_plugged_in,
+    resolve_ev_from_device,
 )
 
 
@@ -111,24 +117,58 @@ def _soc_percent_from_ev_state(state: State | None) -> float | None:
     return _normalize_soc_to_percent(val, unit_str)
 
 
-def _target_soc_percent_from_config(
-    hass: HomeAssistant, opt: dict[str, Any], sensor_key: str
-) -> tuple[float | None, str | None]:
-    """Resolve target SOC %: optional entity, else CONF_TARGET_SOC_PERCENT."""
+def _target_percent_from_resolved(
+    hass: HomeAssistant,
+    resolved: ResolvedEVDevice,
+    fallback_percent: float,
+) -> float:
+    """Charge limit / target SOC from device number/sensor, else options fallback."""
 
-    raw_id = opt.get(sensor_key)
-    entity_id = (str(raw_id).strip() if raw_id else "") or ""
-    if not entity_id:
-        return (
-            float(opt.get(CONF_TARGET_SOC_PERCENT, DEFAULT_TARGET_SOC)),
-            None,
-        )
-
-    st = hass.states.get(entity_id)
+    if not resolved.target_entity_id:
+        return fallback_percent
+    st = hass.states.get(resolved.target_entity_id)
+    if st is None or st.state in ("unknown", "unavailable", None, ""):
+        return fallback_percent
     pct = _soc_percent_from_ev_state(st)
     if pct is None:
-        return (None, "Target SOC entity unavailable")
-    return (pct, None)
+        raw = _parse_float_maybe_percent(st.state)
+        if raw is not None:
+            uom = st.attributes.get("unit_of_measurement")
+            pct = _normalize_soc_to_percent(
+                raw, str(uom).strip() if uom is not None else None
+            )
+    return fallback_percent if pct is None else pct
+
+
+def _presence_plug_for_plan(
+    hass: HomeAssistant,
+    opt: dict[str, Any],
+    resolved: ResolvedEVDevice,
+    legacy_home_key: str,
+) -> tuple[bool | None, bool, bool | None]:
+    """(at_home display, include kWh in plan, plugged display)."""
+
+    plugged = is_plugged_in(hass, resolved.connected_entity_id)
+
+    if resolved.home_entity_id:
+        st = hass.states.get(resolved.home_entity_id)
+        if st is None or st.state in ("unknown", "unavailable", None, ""):
+            if plugged is False:
+                return (None, False, False)
+            return (None, True, plugged)
+        h = _state_indicates_home(st)
+        if h is False:
+            return (False, False, plugged)
+        if plugged is False:
+            return (h, False, False)
+        return (h, True, plugged)
+
+    home_disp, inc = _presence_display_and_plan(hass, opt, legacy_home_key)
+    if home_disp is False:
+        return (False, False, plugged)
+    if plugged is False:
+        return (home_disp, False, False)
+    return (home_disp, inc and (plugged is not False), plugged)
 
 
 def _merge_price_slots_from_attributes(
@@ -337,6 +377,8 @@ class PlanResult:
     immediate_ev1_cost: float | None = None
     immediate_ev2_cost: float | None = None
     immediate_total_cost: float | None = None
+    ev1_connected: bool | None = None
+    ev2_connected: bool | None = None
 
 
 class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
@@ -357,13 +399,19 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
     def price_sensor(self) -> str:
         return self.config_entry.data[CONF_PRICE_SENSOR]
 
-    @property
-    def ev1_soc_sensor(self) -> str:
-        return self.config_entry.data[CONF_EV1_SOC_SENSOR]
-
-    @property
-    def ev2_soc_sensor(self) -> str:
-        return self.config_entry.data[CONF_EV2_SOC_SENSOR]
+    def _resolved_ev(self, slot: int) -> ResolvedEVDevice:
+        opt = self._options()
+        if slot == 1:
+            did = opt.get(CONF_EV1_DEVICE_ID)
+            if did:
+                return resolve_ev_from_device(self.hass, did)
+            soc = (str(opt.get(CONF_EV1_SOC_SENSOR) or "")).strip()
+            return ResolvedEVDevice(device_id="", soc_entity_id=soc or None)
+        did = opt.get(CONF_EV2_DEVICE_ID)
+        if did:
+            return resolve_ev_from_device(self.hass, did)
+        soc = (str(opt.get(CONF_EV2_SOC_SENSOR) or "")).strip()
+        return ResolvedEVDevice(device_id="", soc_entity_id=soc or None)
 
     def _options(self) -> dict[str, Any]:
         return {**self.config_entry.data, **self.config_entry.options}
@@ -401,13 +449,11 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
                 charge_priority=priority,
             )
 
-        target1, terr1 = _target_soc_percent_from_config(
-            self.hass, opt, CONF_EV1_TARGET_SOC_SENSOR
-        )
-        target2, terr2 = _target_soc_percent_from_config(
-            self.hass, opt, CONF_EV2_TARGET_SOC_SENSOR
-        )
-        if terr1 or terr2:
+        r1 = self._resolved_ev(1)
+        r2 = self._resolved_ev(2)
+        fb_target = float(opt.get(CONF_TARGET_SOC_PERCENT, DEFAULT_TARGET_SOC))
+
+        if not r1.soc_entity_id or not r2.soc_entity_id:
             return PlanResult(
                 ev1_soc=None,
                 ev2_soc=None,
@@ -427,13 +473,14 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
                 currency=None,
                 price_unit=None,
                 tomorrow_valid=None,
-                error=terr1 or terr2,
-                ev1_target_percent=target1,
-                ev2_target_percent=target2,
+                error="Both EV devices must be selected (Settings → reconfigure if upgrading).",
             )
 
-        s1 = self.hass.states.get(self.ev1_soc_sensor)
-        s2 = self.hass.states.get(self.ev2_soc_sensor)
+        target1 = _target_percent_from_resolved(self.hass, r1, fb_target)
+        target2 = _target_percent_from_resolved(self.hass, r2, fb_target)
+
+        s1 = self.hass.states.get(r1.soc_entity_id)
+        s2 = self.hass.states.get(r2.soc_entity_id)
         ps = self.hass.states.get(self.price_sensor)
 
         soc1 = _soc_percent_from_ev_state(s1)
@@ -450,11 +497,11 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
             else 0.0
         )
 
-        ev1_home_disp, inc1 = _presence_display_and_plan(
-            self.hass, opt, CONF_EV1_HOME_ENTITY
+        ev1_home_disp, inc1, plug1 = _presence_plug_for_plan(
+            self.hass, opt, r1, CONF_EV1_HOME_ENTITY
         )
-        ev2_home_disp, inc2 = _presence_display_and_plan(
-            self.hass, opt, CONF_EV2_HOME_ENTITY
+        ev2_home_disp, inc2, plug2 = _presence_plug_for_plan(
+            self.hass, opt, r2, CONF_EV2_HOME_ENTITY
         )
 
         if soc1 is None or soc2 is None:
@@ -482,6 +529,8 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
                 ev1_at_home=ev1_home_disp,
                 ev2_at_home=ev2_home_disp,
                 charge_priority=priority,
+                ev1_connected=plug1,
+                ev2_connected=plug2,
             )
 
         total_kwh = kwh1 + kwh2
@@ -519,6 +568,8 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
                 immediate_ev1_cost=0.0,
                 immediate_ev2_cost=0.0,
                 immediate_total_cost=0.0,
+                ev1_connected=plug1,
+                ev2_connected=plug2,
             )
 
         if ekwh_total <= 0:
@@ -551,6 +602,8 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
                 immediate_ev1_cost=0.0,
                 immediate_ev2_cost=0.0,
                 immediate_total_cost=0.0,
+                ev1_connected=plug1,
+                ev2_connected=plug2,
             )
 
         slots = _merge_price_slots(self.hass, self.price_sensor)
@@ -584,6 +637,8 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
                 immediate_ev1_cost=None,
                 immediate_ev2_cost=None,
                 immediate_total_cost=None,
+                ev1_connected=plug1,
+                ev2_connected=plug2,
             )
 
         now = dt_util.now()
@@ -620,6 +675,8 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
                 immediate_ev1_cost=None,
                 immediate_ev2_cost=None,
                 immediate_total_cost=None,
+                ev1_connected=plug1,
+                ev2_connected=plug2,
             )
 
         future_chrono = sorted(future, key=lambda x: x[0])
@@ -693,6 +750,8 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
             immediate_ev1_cost=im1,
             immediate_ev2_cost=im2,
             immediate_total_cost=imtot,
+            ev1_connected=plug1,
+            ev2_connected=plug2,
         )
 
     @callback
@@ -703,21 +762,20 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
 def setup_coordinator_state_listener(
     hass: HomeAssistant, coordinator: EvAutoSmartChargeCoordinator
 ) -> CALLBACK_TYPE:
-    """Subscribe to price + SOC entities; caller should register with entry.async_on_unload."""
+    """Subscribe to price + all entities on each EV device (or legacy overrides)."""
 
-    entities = [
-        coordinator.price_sensor,
-        coordinator.ev1_soc_sensor,
-        coordinator.ev2_soc_sensor,
-    ]
+    entities = [coordinator.price_sensor]
     opt = {**coordinator.config_entry.data, **coordinator.config_entry.options}
-    for key in (
-        CONF_EV1_TARGET_SOC_SENSOR,
-        CONF_EV2_TARGET_SOC_SENSOR,
-        CONF_EV1_HOME_ENTITY,
-        CONF_EV2_HOME_ENTITY,
-    ):
+    for dev_key in (CONF_EV1_DEVICE_ID, CONF_EV2_DEVICE_ID):
+        did = opt.get(dev_key)
+        if did:
+            entities.extend(entity_ids_for_device(hass, did))
+    for key in (CONF_EV1_HOME_ENTITY, CONF_EV2_HOME_ENTITY):
         eid = opt.get(key)
+        if eid and str(eid).strip():
+            entities.append(str(eid).strip())
+    for soc_key in (CONF_EV1_SOC_SENSOR, CONF_EV2_SOC_SENSOR):
+        eid = opt.get(soc_key)
         if eid and str(eid).strip():
             entities.append(str(eid).strip())
 

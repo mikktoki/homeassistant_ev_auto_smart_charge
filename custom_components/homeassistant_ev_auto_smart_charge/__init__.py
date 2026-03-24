@@ -5,11 +5,43 @@ from __future__ import annotations
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 
-from .const import DOMAIN
+from .const import (
+    CONF_EV1_DEVICE_ID,
+    CONF_EV1_SOC_SENSOR,
+    CONF_EV2_DEVICE_ID,
+    CONF_EV2_SOC_SENSOR,
+    DOMAIN,
+)
 from .coordinator import EvAutoSmartChargeCoordinator, setup_coordinator_state_listener
 
 PLATFORMS: list[Platform] = [Platform.SENSOR]
+
+
+async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """v1: entity-based SOC → v2: device-based when possible."""
+
+    if entry.version >= 2:
+        return True
+
+    data = {**entry.data}
+    registry = er.async_get(hass)
+
+    for soc_key, dev_key in (
+        (CONF_EV1_SOC_SENSOR, CONF_EV1_DEVICE_ID),
+        (CONF_EV2_SOC_SENSOR, CONF_EV2_DEVICE_ID),
+    ):
+        ent_id = data.get(soc_key)
+        if not ent_id or data.get(dev_key):
+            continue
+        reg = registry.async_get(ent_id)
+        if reg and reg.device_id:
+            data[dev_key] = reg.device_id
+            data.pop(soc_key, None)
+
+    hass.config_entries.async_update_entry(entry, data=data, version=2)
+    return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

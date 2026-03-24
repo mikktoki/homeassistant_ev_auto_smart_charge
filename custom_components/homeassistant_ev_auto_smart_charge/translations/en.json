@@ -3,17 +3,15 @@
     "step": {
       "user": {
         "title": "EV Auto Smart Charge",
-        "description": "Pick the Energi Data Service sensor (hourly raw_today/raw_tomorrow) and a battery / SOC entity per EV (numeric state or common attributes such as battery_level). The plan uses SOC to estimate kWh to add, spot cost, per-EV cost share, and scheduled cheap hours.",
+        "description": "Select your hourly spot price sensor (Energi Data Service), then the Tesla vehicle device and the Volkswagen-group vehicle device (VW / Škoda / SEAT). Battery %, charge limit, cable/connector, and location are read from those devices. Default capacities: EV1 73 kWh, EV2 58 kWh.",
         "data": {
           "price_sensor": "Spot price sensor (Energi Data Service)",
-          "ev1_soc_sensor": "EV 1 battery level (%)",
-          "ev2_soc_sensor": "EV 2 battery level (%)",
-          "ev1_target_soc_sensor": "EV 1 target charge limit (optional entity)",
-          "ev2_target_soc_sensor": "EV 2 target charge limit (optional entity)",
+          "ev1_device_id": "Tesla vehicle (device)",
+          "ev2_device_id": "Volkswagen-group vehicle (device)",
           "ev1_capacity_kwh": "EV 1 usable battery capacity (kWh)",
           "ev2_capacity_kwh": "EV 2 usable battery capacity (kWh)",
           "charger_power_kw": "Wallbox power (kW), combined if one charger",
-          "target_soc_percent": "Fallback target SOC (%) if no per-EV entity above"
+          "target_soc_percent": "Fallback charge target (%) if the car has no charge-limit entity"
         }
       }
     },
@@ -22,15 +20,11 @@
         "init": {
           "title": "Planner settings",
           "data": {
+            "charge_priority": "Which EV gets the wallbox first when both need charging",
             "ev1_capacity_kwh": "EV 1 usable battery capacity (kWh)",
             "ev2_capacity_kwh": "EV 2 usable battery capacity (kWh)",
             "charger_power_kw": "Wallbox power (kW)",
-            "ev1_target_soc_sensor": "EV 1 target charge limit (optional entity)",
-            "ev2_target_soc_sensor": "EV 2 target charge limit (optional entity)",
-            "ev1_home_entity": "EV 1 at home (device_tracker, person, binary_sensor, …)",
-            "ev2_home_entity": "EV 2 at home (device_tracker, person, binary_sensor, …)",
-            "charge_priority": "Which EV gets the wallbox first when both need charging",
-            "target_soc_percent": "Fallback target SOC (%) if no per-EV entity above"
+            "target_soc_percent": "Fallback charge target (%) if charge limit is missing on the device"
           }
         }
       }

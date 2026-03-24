@@ -74,6 +74,8 @@ class ChargePlanSensor(CoordinatorEntity[EvAutoSmartChargeCoordinator], SensorEn
             "ev2_target_soc_percent": data.ev2_target_percent,
             "ev1_at_home": data.ev1_at_home,
             "ev2_at_home": data.ev2_at_home,
+            "ev1_plugged_in": data.ev1_connected,
+            "ev2_plugged_in": data.ev2_connected,
             "charge_priority": data.charge_priority,
             "ev1_planned_kwh": round(data.ev1_planned_kwh, 3),
             "ev2_planned_kwh": round(data.ev2_planned_kwh, 3),
