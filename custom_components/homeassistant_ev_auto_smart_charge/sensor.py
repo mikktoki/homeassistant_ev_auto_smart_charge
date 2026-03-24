@@ -93,15 +93,26 @@ class ChargePlanSensor(CoordinatorEntity[EvAutoSmartChargeCoordinator], SensorEn
         }
         if data.error:
             attrs["error"] = data.error
-        if data.estimated_cost is not None and data.total_kwh_needed > 0:
+        planned_sum = data.ev1_planned_kwh + data.ev2_planned_kwh
+        attrs["planned_total_kwh"] = round(planned_sum, 3)
+        if data.estimated_cost is not None:
             attrs["estimated_total_cost"] = round(data.estimated_cost, 4)
+        if data.estimated_cost is not None and planned_sum > 0:
             attrs["effective_price_per_kwh"] = round(
-                data.estimated_cost / data.total_kwh_needed, 6
+                data.estimated_cost / planned_sum, 6
             )
         if data.estimated_ev1_cost is not None:
             attrs["estimated_ev1_cost"] = round(data.estimated_ev1_cost, 4)
         if data.estimated_ev2_cost is not None:
             attrs["estimated_ev2_cost"] = round(data.estimated_ev2_cost, 4)
+        if data.ev1_solo_cheapest_cost is not None:
+            attrs["ev1_cheapest_if_alone_cost"] = round(
+                data.ev1_solo_cheapest_cost, 4
+            )
+        if data.ev2_solo_cheapest_cost is not None:
+            attrs["ev2_cheapest_if_alone_cost"] = round(
+                data.ev2_solo_cheapest_cost, 4
+            )
         if data.immediate_ev1_cost is not None:
             attrs["immediate_charge_ev1_cost"] = round(data.immediate_ev1_cost, 4)
         if data.immediate_ev2_cost is not None:

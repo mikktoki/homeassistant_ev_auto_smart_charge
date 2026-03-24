@@ -328,21 +328,40 @@ def _attribute_cheapest_plan_costs(
     if ekwh_total <= 1e-12:
         return (0.0, 0.0)
     if priority == CHARGE_PRIORITY_BALANCED:
-        return (
-            est_cost * (ekwh1 / ekwh_total),
-            est_cost * (ekwh2 / ekwh_total),
-        )
-    rem1, rem2 = ekwh1, ekwh2
-    c1 = c2 = 0.0
-    for _h, price in sorted(chosen, key=lambda x: x[0]):
-        if rem1 <= 1e-9 and rem2 <= 1e-9:
-            break
-        d1, d2, rem1, rem2 = _deliver_one_hour_kwh(
-            rem1, rem2, charger_kw, priority
-        )
-        c1 += price * d1
-        c2 += price * d2
+        c1 = est_cost * (ekwh1 / ekwh_total)
+        c2 = est_cost * (ekwh2 / ekwh_total)
+    else:
+        rem1, rem2 = ekwh1, ekwh2
+        c1 = c2 = 0.0
+        for _h, price in sorted(chosen, key=lambda x: x[0]):
+            if rem1 <= 1e-9 and rem2 <= 1e-9:
+                break
+            d1, d2, rem1, rem2 = _deliver_one_hour_kwh(
+                rem1, rem2, charger_kw, priority
+            )
+            c1 += price * d1
+            c2 += price * d2
+    if ekwh1 <= 1e-12:
+        c1 = 0.0
+    if ekwh2 <= 1e-12:
+        c2 = 0.0
     return (c1, c2)
+
+
+def _solo_cheapest_cost_for_need(
+    future: list[tuple[datetime, float]],
+    charger_kw: float,
+    kwh_need: float,
+) -> float | None:
+    """Cheapest-hour cost if only this EV charged (its full kWh need), ignoring the other car."""
+
+    if kwh_need <= 1e-12:
+        return 0.0
+    if not future:
+        return None
+    hours = int(math.ceil(kwh_need / charger_kw))
+    pick = sorted(future, key=lambda x: x[1])[:hours]
+    return sum(p * charger_kw for _, p in pick)
 
 
 @dataclass
@@ -379,6 +398,8 @@ class PlanResult:
     immediate_total_cost: float | None = None
     ev1_connected: bool | None = None
     ev2_connected: bool | None = None
+    ev1_solo_cheapest_cost: float | None = None
+    ev2_solo_cheapest_cost: float | None = None
 
 
 class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
@@ -572,6 +593,15 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
                 ev2_connected=plug2,
             )
 
+        slots = _merge_price_slots(self.hass, self.price_sensor)
+        now = dt_util.now()
+        window_start = now.replace(minute=0, second=0, microsecond=0)
+        future = (
+            [(h, p) for h, p in slots if h >= window_start] if slots else []
+        )
+        solo1 = _solo_cheapest_cost_for_need(future, charger_kw, kwh1)
+        solo2 = _solo_cheapest_cost_for_need(future, charger_kw, kwh2)
+
         if ekwh_total <= 0:
             return PlanResult(
                 ev1_soc=soc1,
@@ -604,9 +634,10 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
                 immediate_total_cost=0.0,
                 ev1_connected=plug1,
                 ev2_connected=plug2,
+                ev1_solo_cheapest_cost=solo1,
+                ev2_solo_cheapest_cost=solo2,
             )
 
-        slots = _merge_price_slots(self.hass, self.price_sensor)
         if not slots:
             return PlanResult(
                 ev1_soc=soc1,
@@ -639,11 +670,9 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
                 immediate_total_cost=None,
                 ev1_connected=plug1,
                 ev2_connected=plug2,
+                ev1_solo_cheapest_cost=solo1,
+                ev2_solo_cheapest_cost=solo2,
             )
-
-        now = dt_util.now()
-        window_start = now.replace(minute=0, second=0, microsecond=0)
-        future = [(h, p) for h, p in slots if h >= window_start]
 
         if not future:
             return PlanResult(
@@ -677,6 +706,8 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
                 immediate_total_cost=None,
                 ev1_connected=plug1,
                 ev2_connected=plug2,
+                ev1_solo_cheapest_cost=solo1,
+                ev2_solo_cheapest_cost=solo2,
             )
 
         future_chrono = sorted(future, key=lambda x: x[0])
@@ -752,6 +783,8 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
             immediate_total_cost=imtot,
             ev1_connected=plug1,
             ev2_connected=plug2,
+            ev1_solo_cheapest_cost=solo1,
+            ev2_solo_cheapest_cost=solo2,
         )
 
     @callback
