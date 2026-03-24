@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import voluptuous as vol
 
-from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN
 from homeassistant.config_entries import (
     ConfigEntry,
     ConfigFlow,
@@ -15,8 +14,6 @@ from homeassistant.core import callback
 from homeassistant.helpers.selector import (
     DeviceSelector,
     DeviceSelectorConfig,
-    EntitySelector,
-    EntitySelectorConfig,
     NumberSelector,
     NumberSelectorConfig,
     NumberSelectorMode,
@@ -35,8 +32,9 @@ from .const import (
     CONF_EV1_DEVICE_ID,
     CONF_EV2_CAPACITY_KWH,
     CONF_EV2_DEVICE_ID,
-    CONF_PRICE_SENSOR,
+    CONF_PRICE_DEVICE_ID,
     CONF_TARGET_SOC_PERCENT,
+    ENERGI_DATA_SERVICE_INTEGRATIONS,
     DEFAULT_CHARGE_PRIORITY,
     DEFAULT_CHARGER_KW,
     DEFAULT_EV1_CAPACITY_KWH,
@@ -56,11 +54,18 @@ def _vw_family_device_filter() -> list[dict[str, str]]:
     return [{"integration": dom} for dom in VW_FAMILY_DEVICE_INTEGRATIONS]
 
 
+def _energi_device_filter() -> list[dict[str, str]]:
+    return [{"integration": dom} for dom in ENERGI_DATA_SERVICE_INTEGRATIONS]
+
+
 def _user_schema(data: dict) -> vol.Schema:
     return vol.Schema(
         {
-            vol.Required(CONF_PRICE_SENSOR, default=data.get(CONF_PRICE_SENSOR, "")): EntitySelector(
-                EntitySelectorConfig(domain=SENSOR_DOMAIN)
+            vol.Required(
+                CONF_PRICE_DEVICE_ID,
+                default=data.get(CONF_PRICE_DEVICE_ID),
+            ): DeviceSelector(
+                DeviceSelectorConfig(filter=_energi_device_filter())
             ),
             vol.Required(
                 CONF_EV1_DEVICE_ID,
@@ -125,7 +130,7 @@ def _user_schema(data: dict) -> vol.Schema:
 class EvAutoSmartChargeConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle UI setup."""
 
-    VERSION = 2
+    VERSION = 3
 
     async def async_step_user(
         self, user_input: dict | None = None
@@ -133,7 +138,7 @@ class EvAutoSmartChargeConfigFlow(ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
         if user_input is not None:
             await self.async_set_unique_id(
-                f"{user_input[CONF_PRICE_SENSOR]}_"
+                f"{user_input[CONF_PRICE_DEVICE_ID]}_"
                 f"{user_input[CONF_EV1_DEVICE_ID]}_"
                 f"{user_input[CONF_EV2_DEVICE_ID]}"
             )

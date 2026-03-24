@@ -168,6 +168,46 @@ def entity_ids_for_device(hass: HomeAssistant, device_id: str) -> list[str]:
     return [e.entity_id for e in entries]
 
 
+def _score_eds_price_entity(hass: HomeAssistant, entry: RegistryEntry) -> int:
+    """Prefer Energi Data Service spot sensors (raw_today / raw_tomorrow attributes)."""
+
+    if entry.domain != "sensor":
+        return 0
+    score = 0
+    st = hass.states.get(entry.entity_id)
+    if st and isinstance(st.attributes, dict):
+        if st.attributes.get("raw_today") is not None:
+            score += 100
+        if st.attributes.get("raw_tomorrow") is not None:
+            score += 40
+    oid = entry.entity_id.split(".", 1)[-1].lower()
+    for hint in ("elspot", "spot", "price", "electricity", "kwh"):
+        if hint in oid:
+            score += 5
+    return score
+
+
+def resolve_spot_price_sensor(hass: HomeAssistant, device_id: str) -> str | None:
+    """Pick the best sensor on an Energi Data Service device for hourly prices."""
+
+    registry = er.async_get(hass)
+    entries = _entries_for_device(registry, device_id)
+    best: tuple[int, str] | None = None
+    for e in entries:
+        s = _score_eds_price_entity(hass, e)
+        if s <= 0:
+            continue
+        cand = (s, e.entity_id)
+        if best is None or cand[0] > best[0]:
+            best = cand
+    if best:
+        return best[1]
+    for e in entries:
+        if e.domain == "sensor":
+            return e.entity_id
+    return None
+
+
 def is_plugged_in(hass: HomeAssistant, entity_id: str | None) -> bool | None:
     """Interpret cable/connector/plug entity; None if unknown."""
 

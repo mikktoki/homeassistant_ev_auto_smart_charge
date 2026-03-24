@@ -3,9 +3,9 @@
     "step": {
       "user": {
         "title": "EV Auto Smart Charge",
-        "description": "Select your hourly spot price sensor (Energi Data Service), then the Tesla vehicle device and the Volkswagen-group vehicle device (VW / Škoda / SEAT). Battery %, charge limit, cable/connector, and location are read from those devices. Default capacities: EV1 73 kWh, EV2 58 kWh.",
+        "description": "Select your Energi Data Service device (hourly spot prices), then the Tesla vehicle device and the Volkswagen-group vehicle device (VW / Škoda / SEAT). The integration picks the price sensor from the EDS device (raw_today / raw_tomorrow). Battery %, charge limit, cable/connector, and location are read from the EV devices. Default capacities: EV1 73 kWh, EV2 58 kWh.",
         "data": {
-          "price_sensor": "Spot price sensor (Energi Data Service)",
+          "price_device_id": "Energi Data Service (device)",
           "ev1_device_id": "Tesla vehicle (device)",
           "ev2_device_id": "Volkswagen-group vehicle (device)",
           "ev1_capacity_kwh": "EV 1 usable battery capacity (kWh)",

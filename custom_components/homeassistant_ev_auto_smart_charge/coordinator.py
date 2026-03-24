@@ -29,6 +29,7 @@ from .const import (
     CONF_EV2_DEVICE_ID,
     CONF_EV2_HOME_ENTITY,
     CONF_EV2_SOC_SENSOR,
+    CONF_PRICE_DEVICE_ID,
     CONF_PRICE_SENSOR,
     CONF_TARGET_SOC_PERCENT,
     DEFAULT_CHARGE_PRIORITY,
@@ -38,6 +39,7 @@ from .const import (
     UPDATE_INTERVAL_MIN,
 )
 from .device_resolve import (
+    resolve_spot_price_sensor,
     ResolvedEVDevice,
     entity_ids_for_device,
     is_plugged_in,
@@ -418,7 +420,14 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
 
     @property
     def price_sensor(self) -> str:
-        return self.config_entry.data[CONF_PRICE_SENSOR]
+        opt = self._options()
+        dev = opt.get(CONF_PRICE_DEVICE_ID)
+        if dev:
+            eid = resolve_spot_price_sensor(self.hass, dev)
+            if eid:
+                return eid
+        legacy = opt.get(CONF_PRICE_SENSOR)
+        return str(legacy).strip() if legacy else ""
 
     def _resolved_ev(self, slot: int) -> ResolvedEVDevice:
         opt = self._options()
@@ -797,8 +806,17 @@ def setup_coordinator_state_listener(
 ) -> CALLBACK_TYPE:
     """Subscribe to price + all entities on each EV device (or legacy overrides)."""
 
-    entities = [coordinator.price_sensor]
+    entities: list[str] = []
     opt = {**coordinator.config_entry.data, **coordinator.config_entry.options}
+    price_dev = opt.get(CONF_PRICE_DEVICE_ID)
+    if price_dev:
+        entities.extend(entity_ids_for_device(hass, price_dev))
+    else:
+        ps = opt.get(CONF_PRICE_SENSOR)
+        if ps and str(ps).strip():
+            entities.append(str(ps).strip())
+    if coordinator.price_sensor and coordinator.price_sensor not in entities:
+        entities.append(coordinator.price_sensor)
     for dev_key in (CONF_EV1_DEVICE_ID, CONF_EV2_DEVICE_ID):
         did = opt.get(dev_key)
         if did:

@@ -12,6 +12,8 @@ from .const import (
     CONF_EV1_SOC_SENSOR,
     CONF_EV2_DEVICE_ID,
     CONF_EV2_SOC_SENSOR,
+    CONF_PRICE_DEVICE_ID,
+    CONF_PRICE_SENSOR,
     DOMAIN,
 )
 from .coordinator import EvAutoSmartChargeCoordinator, setup_coordinator_state_listener
@@ -20,27 +22,36 @@ PLATFORMS: list[Platform] = [Platform.SENSOR]
 
 
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """v1: entity-based SOC → v2: device-based when possible."""
+    """v1→v2: SOC entities → EV devices. v2→v3: price sensor → Energi Data Service device."""
 
-    if entry.version >= 2:
+    if entry.version >= 3:
         return True
 
     data = {**entry.data}
     registry = er.async_get(hass)
 
-    for soc_key, dev_key in (
-        (CONF_EV1_SOC_SENSOR, CONF_EV1_DEVICE_ID),
-        (CONF_EV2_SOC_SENSOR, CONF_EV2_DEVICE_ID),
-    ):
-        ent_id = data.get(soc_key)
-        if not ent_id or data.get(dev_key):
-            continue
-        reg = registry.async_get(ent_id)
-        if reg and reg.device_id:
-            data[dev_key] = reg.device_id
-            data.pop(soc_key, None)
+    if entry.version < 2:
+        for soc_key, dev_key in (
+            (CONF_EV1_SOC_SENSOR, CONF_EV1_DEVICE_ID),
+            (CONF_EV2_SOC_SENSOR, CONF_EV2_DEVICE_ID),
+        ):
+            ent_id = data.get(soc_key)
+            if not ent_id or data.get(dev_key):
+                continue
+            reg = registry.async_get(ent_id)
+            if reg and reg.device_id:
+                data[dev_key] = reg.device_id
+                data.pop(soc_key, None)
 
-    hass.config_entries.async_update_entry(entry, data=data, version=2)
+    if entry.version < 3:
+        price_ent = data.get(CONF_PRICE_SENSOR)
+        if price_ent and not data.get(CONF_PRICE_DEVICE_ID):
+            preg = registry.async_get(price_ent)
+            if preg and preg.device_id:
+                data[CONF_PRICE_DEVICE_ID] = preg.device_id
+                data.pop(CONF_PRICE_SENSOR, None)
+
+    hass.config_entries.async_update_entry(entry, data=data, version=3)
     return True
 
 

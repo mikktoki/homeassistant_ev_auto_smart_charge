@@ -1,11 +1,12 @@
 """Constants for homeassistant_ev_auto_smart_charge."""
 
 # Semantic version for HACS / Home Assistant (must match manifest.json "version").
-INTEGRATION_VERSION = "0.0.7"
+INTEGRATION_VERSION = "0.0.8"
 
 DOMAIN = "homeassistant_ev_auto_smart_charge"
 
 CONF_PRICE_SENSOR = "price_sensor"
+CONF_PRICE_DEVICE_ID = "price_device_id"
 # Device-based (v2+)
 CONF_EV1_DEVICE_ID = "ev1_device_id"
 CONF_EV2_DEVICE_ID = "ev2_device_id"
@@ -36,6 +37,8 @@ VW_FAMILY_DEVICE_INTEGRATIONS = (
     "skodaconnect",
     "seatconnect",
 )
+# Energi Data Service (HACS) — hourly spot prices (raw_today / raw_tomorrow)
+ENERGI_DATA_SERVICE_INTEGRATIONS = ("energidataservice",)
 
 DEFAULT_CHARGER_KW = 11.0
 DEFAULT_TARGET_SOC = 100.0
