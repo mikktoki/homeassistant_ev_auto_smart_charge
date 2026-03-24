@@ -148,7 +148,11 @@ def _presence_plug_for_plan(
     resolved: ResolvedEVDevice,
     legacy_home_key: str,
 ) -> tuple[bool | None, bool, bool | None]:
-    """(at_home display, include kWh in plan, plugged display)."""
+    """(at_home display, include kWh in plan, plugged display).
+
+    Cable connected implies the car is at the wallbox: include it in the cost plan
+    even when GPS/device_tracker still shows *not_home*.
+    """
 
     plugged = is_plugged_in(hass, resolved.connected_entity_id)
 
@@ -159,18 +163,22 @@ def _presence_plug_for_plan(
                 return (None, False, False)
             return (None, True, plugged)
         h = _state_indicates_home(st)
-        if h is False:
-            return (False, False, plugged)
         if plugged is False:
             return (h, False, False)
+        if plugged is True:
+            return (h, True, plugged)
+        if h is False:
+            return (False, False, plugged)
         return (h, True, plugged)
 
     home_disp, inc = _presence_display_and_plan(hass, opt, legacy_home_key)
-    if home_disp is False:
-        return (False, False, plugged)
     if plugged is False:
         return (home_disp, False, False)
-    return (home_disp, inc and (plugged is not False), plugged)
+    if plugged is True:
+        return (home_disp, True, plugged)
+    if home_disp is False:
+        return (False, False, plugged)
+    return (home_disp, inc, plugged)
 
 
 def _merge_price_slots_from_attributes(
@@ -187,13 +195,18 @@ def _merge_price_slots_from_attributes(
             if not isinstance(row, dict):
                 continue
             h = _parse_hour(row.get("hour"))
-            price = row.get("price")
-            if h is None or price is None:
+            if h is None:
                 continue
-            try:
-                slots.append((dt_util.as_local(h), float(price)))
-            except (TypeError, ValueError):
+            price_val = None
+            for key in ("price", "value", "total"):
+                if key not in row or row[key] is None:
+                    continue
+                price_val = _parse_float_maybe_percent(row[key])
+                if price_val is not None:
+                    break
+            if price_val is None:
                 continue
+            slots.append((dt_util.as_local(h), float(price_val)))
 
     slots.sort(key=lambda x: x[0])
     return slots

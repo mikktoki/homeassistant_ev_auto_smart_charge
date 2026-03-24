@@ -318,21 +318,37 @@ def _score_eds_price_entity(hass: HomeAssistant, entry: RegistryEntry) -> int:
     return score
 
 
+def _eds_raw_row_count(hass: HomeAssistant, entity_id: str) -> int:
+    """How many hourly rows are in raw_today + raw_tomorrow (pick sensor with real data)."""
+
+    st = hass.states.get(entity_id)
+    if not st or not isinstance(st.attributes, dict):
+        return 0
+    rt = st.attributes.get("raw_today")
+    rw = st.attributes.get("raw_tomorrow")
+    if not isinstance(rt, list):
+        rt = []
+    if not isinstance(rw, list):
+        rw = []
+    return len(rt) + len(rw)
+
+
 def resolve_spot_price_sensor(hass: HomeAssistant, device_id: str) -> str | None:
     """Pick the best sensor on an Energi Data Service device for hourly prices."""
 
     registry = er.async_get(hass)
     entries = _entries_for_device(registry, device_id)
-    best: tuple[int, str] | None = None
+    best: tuple[int, int, str] | None = None
     for e in entries:
         s = _score_eds_price_entity(hass, e)
         if s <= 0:
             continue
-        cand = (s, e.entity_id)
-        if best is None or cand[0] > best[0]:
+        rows = _eds_raw_row_count(hass, e.entity_id)
+        cand = (s, rows, e.entity_id)
+        if best is None or (cand[0], cand[1]) > (best[0], best[1]):
             best = cand
     if best:
-        return best[1]
+        return best[2]
     for e in entries:
         if e.domain == "sensor":
             return e.entity_id
