@@ -72,6 +72,11 @@ class ChargePlanSensor(CoordinatorEntity[EvAutoSmartChargeCoordinator], SensorEn
             "ev2_soc_percent": data.ev2_soc,
             "ev1_target_soc_percent": data.ev1_target_percent,
             "ev2_target_soc_percent": data.ev2_target_percent,
+            "ev1_at_home": data.ev1_at_home,
+            "ev2_at_home": data.ev2_at_home,
+            "charge_priority": data.charge_priority,
+            "ev1_planned_kwh": round(data.ev1_planned_kwh, 3),
+            "ev2_planned_kwh": round(data.ev2_planned_kwh, 3),
             "ev1_kwh_needed": round(data.ev1_kwh_needed, 3),
             "ev2_kwh_needed": round(data.ev2_kwh_needed, 3),
             "total_kwh_needed": round(data.total_kwh_needed, 3),
@@ -95,6 +100,14 @@ class ChargePlanSensor(CoordinatorEntity[EvAutoSmartChargeCoordinator], SensorEn
             attrs["estimated_ev1_cost"] = round(data.estimated_ev1_cost, 4)
         if data.estimated_ev2_cost is not None:
             attrs["estimated_ev2_cost"] = round(data.estimated_ev2_cost, 4)
+        if data.immediate_ev1_cost is not None:
+            attrs["immediate_charge_ev1_cost"] = round(data.immediate_ev1_cost, 4)
+        if data.immediate_ev2_cost is not None:
+            attrs["immediate_charge_ev2_cost"] = round(data.immediate_ev2_cost, 4)
+        if data.immediate_total_cost is not None:
+            attrs["immediate_charge_total_cost"] = round(
+                data.immediate_total_cost, 4
+            )
         return attrs
 
     @property

@@ -27,6 +27,9 @@
             "charger_power_kw": "Wallbox power (kW)",
             "ev1_target_soc_sensor": "EV 1 target charge limit (optional entity)",
             "ev2_target_soc_sensor": "EV 2 target charge limit (optional entity)",
+            "ev1_home_entity": "EV 1 at home (device_tracker, person, binary_sensor, …)",
+            "ev2_home_entity": "EV 2 at home (device_tracker, person, binary_sensor, …)",
+            "charge_priority": "Which EV gets the wallbox first when both need charging",
             "target_soc_percent": "Fallback target SOC (%) if no per-EV entity above"
           }
         }

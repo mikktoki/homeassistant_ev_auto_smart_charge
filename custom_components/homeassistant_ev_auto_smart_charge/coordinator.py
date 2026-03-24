@@ -9,21 +9,29 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, State, callback
 from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    CHARGE_PRIORITY_BALANCED,
+    CHARGE_PRIORITY_EV1_FIRST,
+    CHARGE_PRIORITY_EV2_FIRST,
     CONF_CHARGER_POWER_KW,
+    CONF_CHARGE_PRIORITY,
     CONF_EV1_CAPACITY_KWH,
+    CONF_EV1_HOME_ENTITY,
     CONF_EV1_SOC_SENSOR,
     CONF_EV1_TARGET_SOC_SENSOR,
     CONF_EV2_CAPACITY_KWH,
+    CONF_EV2_HOME_ENTITY,
     CONF_EV2_SOC_SENSOR,
     CONF_EV2_TARGET_SOC_SENSOR,
     CONF_PRICE_SENSOR,
     CONF_TARGET_SOC_PERCENT,
+    DEFAULT_CHARGE_PRIORITY,
     DEFAULT_CHARGER_KW,
     DEFAULT_TARGET_SOC,
     DOMAIN,
@@ -158,6 +166,145 @@ def _merge_price_slots(
     return _merge_price_slots_from_attributes(dict(state.attributes))
 
 
+def _normalize_charge_priority(raw: Any) -> str:
+    v = str(raw or "").strip().lower().replace("-", "_")
+    if v in (CHARGE_PRIORITY_EV1_FIRST, "ev1"):
+        return CHARGE_PRIORITY_EV1_FIRST
+    if v in (CHARGE_PRIORITY_EV2_FIRST, "ev2"):
+        return CHARGE_PRIORITY_EV2_FIRST
+    return CHARGE_PRIORITY_BALANCED
+
+
+def _state_indicates_home(state: State) -> bool | None:
+    domain = state.domain
+    s = (state.state or "").lower()
+    if domain in ("device_tracker", "person"):
+        if s == "home":
+            return True
+        if s in ("not_home", "away"):
+            return False
+        return None
+    if domain in ("binary_sensor", "input_boolean"):
+        if s == STATE_ON.lower():
+            return True
+        if s == STATE_OFF.lower():
+            return False
+        return None
+    if s in ("home", "on", "yes", "true"):
+        return True
+    if s in ("not_home", "away", "off", "no", "false"):
+        return False
+    return None
+
+
+def _presence_display_and_plan(
+    hass: HomeAssistant, opt: dict[str, Any], key: str
+) -> tuple[bool | None, bool]:
+    """(UI at-home or None if unknown / not configured, include kWh in plan)."""
+
+    raw_id = opt.get(key)
+    entity_id = (str(raw_id).strip() if raw_id else "") or ""
+    if not entity_id:
+        return (None, True)
+
+    st = hass.states.get(entity_id)
+    if st is None or st.state in ("unknown", "unavailable", None, ""):
+        return (None, True)
+
+    home = _state_indicates_home(st)
+    if home is None:
+        return (None, True)
+    return (home, home)
+
+
+def _deliver_one_hour_kwh(
+    rem1: float,
+    rem2: float,
+    cap_kw: float,
+    priority: str,
+) -> tuple[float, float, float, float]:
+    """kWh to EV1, EV2 this hour, then remaining rem1, rem2."""
+
+    rem1 = max(0.0, rem1)
+    rem2 = max(0.0, rem2)
+    cap_kw = max(0.0, cap_kw)
+    if rem1 <= 1e-12 and rem2 <= 1e-12:
+        return (0.0, 0.0, rem1, rem2)
+
+    if priority == CHARGE_PRIORITY_EV1_FIRST:
+        d1 = min(rem1, cap_kw)
+        d2 = min(rem2, cap_kw - d1)
+        return (d1, d2, rem1 - d1, rem2 - d2)
+
+    if priority == CHARGE_PRIORITY_EV2_FIRST:
+        d2 = min(rem2, cap_kw)
+        d1 = min(rem1, cap_kw - d2)
+        return (d1, d2, rem1 - d1, rem2 - d2)
+
+    total = rem1 + rem2
+    deliver = min(cap_kw, total)
+    if total <= 1e-12:
+        return (0.0, 0.0, rem1, rem2)
+    d1 = min(rem1, deliver * rem1 / total)
+    d2 = min(rem2, deliver - d1)
+    slack = deliver - d1 - d2
+    if slack > 1e-9:
+        add1 = min(slack, rem1 - d1)
+        d1 += add1
+        slack -= add1
+        d2 += min(slack, rem2 - d2)
+    return (d1, d2, rem1 - d1, rem2 - d2)
+
+
+def _sequential_energy_costs(
+    hours_ordered: list[tuple[datetime, float]],
+    charger_kw: float,
+    start_rem1: float,
+    start_rem2: float,
+    priority: str,
+) -> tuple[float, float, float]:
+    rem1, rem2 = max(0.0, start_rem1), max(0.0, start_rem2)
+    c1 = c2 = 0.0
+    for _h, price in hours_ordered:
+        if rem1 <= 1e-9 and rem2 <= 1e-9:
+            break
+        d1, d2, rem1, rem2 = _deliver_one_hour_kwh(
+            rem1, rem2, charger_kw, priority
+        )
+        c1 += price * d1
+        c2 += price * d2
+    return (c1, c2, c1 + c2)
+
+
+def _attribute_cheapest_plan_costs(
+    chosen: list[tuple[datetime, float]],
+    charger_kw: float,
+    ekwh1: float,
+    ekwh2: float,
+    priority: str,
+    est_cost: float,
+) -> tuple[float, float]:
+    ekwh_total = ekwh1 + ekwh2
+    if ekwh_total <= 1e-12:
+        return (0.0, 0.0)
+    if priority == CHARGE_PRIORITY_BALANCED:
+        return (
+            est_cost * (ekwh1 / ekwh_total),
+            est_cost * (ekwh2 / ekwh_total),
+        )
+    rem1, rem2 = ekwh1, ekwh2
+    c1 = c2 = 0.0
+    for _h, price in sorted(chosen, key=lambda x: x[0]):
+        if rem1 <= 1e-9 and rem2 <= 1e-9:
+            break
+        d1, d2, rem1, rem2 = _deliver_one_hour_kwh(
+            rem1, rem2, charger_kw, priority
+        )
+        c1 += price * d1
+        c2 += price * d2
+    return (c1, c2)
+
+
 @dataclass
 class PlanResult:
     """Computed charge plan."""
@@ -182,6 +329,14 @@ class PlanResult:
     error: str | None
     ev1_target_percent: float | None = None
     ev2_target_percent: float | None = None
+    ev1_at_home: bool | None = None
+    ev2_at_home: bool | None = None
+    charge_priority: str = DEFAULT_CHARGE_PRIORITY
+    ev1_planned_kwh: float = 0.0
+    ev2_planned_kwh: float = 0.0
+    immediate_ev1_cost: float | None = None
+    immediate_ev2_cost: float | None = None
+    immediate_total_cost: float | None = None
 
 
 class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
@@ -218,6 +373,7 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
 
     def _compute_plan(self) -> PlanResult:
         opt = self._options()
+        priority = _normalize_charge_priority(opt.get(CONF_CHARGE_PRIORITY))
         cap1 = float(opt[CONF_EV1_CAPACITY_KWH])
         cap2 = float(opt[CONF_EV2_CAPACITY_KWH])
         charger_kw = float(opt.get(CONF_CHARGER_POWER_KW, DEFAULT_CHARGER_KW))
@@ -242,6 +398,7 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
                 price_unit=None,
                 tomorrow_valid=None,
                 error="charger_power_kw must be positive",
+                charge_priority=priority,
             )
 
         target1, terr1 = _target_soc_percent_from_config(
@@ -254,6 +411,7 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
             return PlanResult(
                 ev1_soc=None,
                 ev2_soc=None,
+                charge_priority=priority,
                 ev1_kwh_needed=0.0,
                 ev2_kwh_needed=0.0,
                 total_kwh_needed=0.0,
@@ -292,6 +450,13 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
             else 0.0
         )
 
+        ev1_home_disp, inc1 = _presence_display_and_plan(
+            self.hass, opt, CONF_EV1_HOME_ENTITY
+        )
+        ev2_home_disp, inc2 = _presence_display_and_plan(
+            self.hass, opt, CONF_EV2_HOME_ENTITY
+        )
+
         if soc1 is None or soc2 is None:
             return PlanResult(
                 ev1_soc=soc1,
@@ -314,9 +479,16 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
                 error="EV SOC sensor unavailable",
                 ev1_target_percent=target1,
                 ev2_target_percent=target2,
+                ev1_at_home=ev1_home_disp,
+                ev2_at_home=ev2_home_disp,
+                charge_priority=priority,
             )
 
         total_kwh = kwh1 + kwh2
+        ekwh1 = kwh1 if inc1 else 0.0
+        ekwh2 = kwh2 if inc2 else 0.0
+        ekwh_total = ekwh1 + ekwh2
+
         if total_kwh <= 0:
             return PlanResult(
                 ev1_soc=soc1,
@@ -339,6 +511,46 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
                 error=None,
                 ev1_target_percent=target1,
                 ev2_target_percent=target2,
+                ev1_at_home=ev1_home_disp,
+                ev2_at_home=ev2_home_disp,
+                charge_priority=priority,
+                ev1_planned_kwh=ekwh1,
+                ev2_planned_kwh=ekwh2,
+                immediate_ev1_cost=0.0,
+                immediate_ev2_cost=0.0,
+                immediate_total_cost=0.0,
+            )
+
+        if ekwh_total <= 0:
+            return PlanResult(
+                ev1_soc=soc1,
+                ev2_soc=soc2,
+                ev1_kwh_needed=kwh1,
+                ev2_kwh_needed=kwh2,
+                total_kwh_needed=total_kwh,
+                hours_to_charge=0,
+                charger_power_kw=charger_kw,
+                selected_slots=[],
+                estimated_cost=0.0,
+                estimated_ev1_cost=0.0,
+                estimated_ev2_cost=0.0,
+                charging_window_start=None,
+                charging_window_end=None,
+                charging_schedule_summary=None,
+                currency=ps.attributes.get("currency") if ps else None,
+                price_unit=ps.attributes.get("unit") if ps else None,
+                tomorrow_valid=ps.attributes.get("tomorrow_valid") if ps else None,
+                error=None,
+                ev1_target_percent=target1,
+                ev2_target_percent=target2,
+                ev1_at_home=ev1_home_disp,
+                ev2_at_home=ev2_home_disp,
+                charge_priority=priority,
+                ev1_planned_kwh=0.0,
+                ev2_planned_kwh=0.0,
+                immediate_ev1_cost=0.0,
+                immediate_ev2_cost=0.0,
+                immediate_total_cost=0.0,
             )
 
         slots = _merge_price_slots(self.hass, self.price_sensor)
@@ -364,11 +576,20 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
                 error="No hourly prices (check Energi Data Service sensor and raw_today/raw_tomorrow)",
                 ev1_target_percent=target1,
                 ev2_target_percent=target2,
+                ev1_at_home=ev1_home_disp,
+                ev2_at_home=ev2_home_disp,
+                charge_priority=priority,
+                ev1_planned_kwh=ekwh1,
+                ev2_planned_kwh=ekwh2,
+                immediate_ev1_cost=None,
+                immediate_ev2_cost=None,
+                immediate_total_cost=None,
             )
 
         now = dt_util.now()
         window_start = now.replace(minute=0, second=0, microsecond=0)
         future = [(h, p) for h, p in slots if h >= window_start]
+
         if not future:
             return PlanResult(
                 ev1_soc=soc1,
@@ -391,16 +612,30 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
                 error="No future price hours in raw data",
                 ev1_target_percent=target1,
                 ev2_target_percent=target2,
+                ev1_at_home=ev1_home_disp,
+                ev2_at_home=ev2_home_disp,
+                charge_priority=priority,
+                ev1_planned_kwh=ekwh1,
+                ev2_planned_kwh=ekwh2,
+                immediate_ev1_cost=None,
+                immediate_ev2_cost=None,
+                immediate_total_cost=None,
             )
 
-        hours_needed = int(math.ceil(total_kwh / charger_kw))
+        future_chrono = sorted(future, key=lambda x: x[0])
+        im1, im2, imtot = _sequential_energy_costs(
+            future_chrono, charger_kw, ekwh1, ekwh2, priority
+        )
+
+        hours_needed = int(math.ceil(ekwh_total / charger_kw))
         sorted_by_price = sorted(future, key=lambda x: x[1])
         chosen = sorted_by_price[:hours_needed]
         chosen.sort(key=lambda x: x[0])
 
         est_cost = sum(p * charger_kw for _, p in chosen)
-        ev1_cost = est_cost * (kwh1 / total_kwh)
-        ev2_cost = est_cost * (kwh2 / total_kwh)
+        ev1_cost, ev2_cost = _attribute_cheapest_plan_costs(
+            chosen, charger_kw, ekwh1, ekwh2, priority, est_cost
+        )
 
         first_h, _ = chosen[0]
         last_h, _ = chosen[-1]
@@ -413,14 +648,21 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
             f"local ({hours_needed} h)"
         )
 
-        selected = [
-            {
-                "hour": h.isoformat(),
-                "price": p,
-                "energy_kwh": charger_kw,
-            }
-            for h, p in chosen
-        ]
+        rem1, rem2 = ekwh1, ekwh2
+        selected: list[dict[str, Any]] = []
+        for h, p in chosen:
+            d1, d2, rem1, rem2 = _deliver_one_hour_kwh(
+                rem1, rem2, charger_kw, priority
+            )
+            selected.append(
+                {
+                    "hour": h.isoformat(),
+                    "price": p,
+                    "energy_kwh": d1 + d2,
+                    "ev1_kwh": round(d1, 4),
+                    "ev2_kwh": round(d2, 4),
+                }
+            )
 
         return PlanResult(
             ev1_soc=soc1,
@@ -443,6 +685,14 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
             error=None,
             ev1_target_percent=target1,
             ev2_target_percent=target2,
+            ev1_at_home=ev1_home_disp,
+            ev2_at_home=ev2_home_disp,
+            charge_priority=priority,
+            ev1_planned_kwh=ekwh1,
+            ev2_planned_kwh=ekwh2,
+            immediate_ev1_cost=im1,
+            immediate_ev2_cost=im2,
+            immediate_total_cost=imtot,
         )
 
     @callback
@@ -461,7 +711,12 @@ def setup_coordinator_state_listener(
         coordinator.ev2_soc_sensor,
     ]
     opt = {**coordinator.config_entry.data, **coordinator.config_entry.options}
-    for key in (CONF_EV1_TARGET_SOC_SENSOR, CONF_EV2_TARGET_SOC_SENSOR):
+    for key in (
+        CONF_EV1_TARGET_SOC_SENSOR,
+        CONF_EV2_TARGET_SOC_SENSOR,
+        CONF_EV1_HOME_ENTITY,
+        CONF_EV2_HOME_ENTITY,
+    ):
         eid = opt.get(key)
         if eid and str(eid).strip():
             entities.append(str(eid).strip())

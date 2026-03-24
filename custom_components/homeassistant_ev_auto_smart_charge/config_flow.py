@@ -20,49 +20,72 @@ from homeassistant.helpers.selector import (
     NumberSelector,
     NumberSelectorConfig,
     NumberSelectorMode,
+    SelectSelector,
+    SelectSelectorConfig,
+    SelectSelectorMode,
 )
 
 from .const import (
+    CHARGE_PRIORITY_BALANCED,
+    CHARGE_PRIORITY_EV1_FIRST,
+    CHARGE_PRIORITY_EV2_FIRST,
     CONF_CHARGER_POWER_KW,
+    CONF_CHARGE_PRIORITY,
     CONF_EV1_CAPACITY_KWH,
+    CONF_EV1_HOME_ENTITY,
     CONF_EV1_SOC_SENSOR,
     CONF_EV1_TARGET_SOC_SENSOR,
     CONF_EV2_CAPACITY_KWH,
+    CONF_EV2_HOME_ENTITY,
     CONF_EV2_SOC_SENSOR,
     CONF_EV2_TARGET_SOC_SENSOR,
     CONF_PRICE_SENSOR,
     CONF_TARGET_SOC_PERCENT,
+    DEFAULT_CHARGE_PRIORITY,
     DEFAULT_CHARGER_KW,
     DEFAULT_TARGET_SOC,
     DOMAIN,
 )
 
 _TARGET_ENTITY_DOMAINS: list[str] = [SENSOR_DOMAIN, "number", "input_number"]
+_HOME_ENTITY_DOMAINS: list[str] = [
+    "binary_sensor",
+    "device_tracker",
+    "person",
+    "input_boolean",
+]
+
+_OPTIONAL_ENTITY_KEYS = (
+    CONF_EV1_TARGET_SOC_SENSOR,
+    CONF_EV2_TARGET_SOC_SENSOR,
+    CONF_EV1_HOME_ENTITY,
+    CONF_EV2_HOME_ENTITY,
+)
 
 
-def _strip_empty_optional_target_entities(data: Any) -> Any:
-    """Entity selectors reject ''; optional targets must omit the key instead."""
+def _strip_empty_optional_entities(data: Any) -> Any:
+    """Entity selectors reject ''; optional fields must omit the key instead."""
 
     if not isinstance(data, dict):
         return data
     cleaned = dict(data)
-    for key in (CONF_EV1_TARGET_SOC_SENSOR, CONF_EV2_TARGET_SOC_SENSOR):
+    for key in _OPTIONAL_ENTITY_KEYS:
         if cleaned.get(key) in (None, ""):
             cleaned.pop(key, None)
     return cleaned
 
 
-class _SchemaStripOptionalTargets(vol.Schema):
+class _SchemaStripOptionalEntities(vol.Schema):
     """Keep schema.schema as a dict (required by HA form UI); strip '' before submit."""
 
     def __call__(self, data: Any) -> Any:
         if isinstance(data, dict):
-            data = _strip_empty_optional_target_entities(dict(data))
+            data = _strip_empty_optional_entities(dict(data))
         return super().__call__(data)
 
 
 def _user_schema_defaults(data: dict) -> vol.Schema:
-    return _SchemaStripOptionalTargets(
+    return _SchemaStripOptionalEntities(
         {
             vol.Required(CONF_PRICE_SENSOR, default=data.get(CONF_PRICE_SENSOR, "")): EntitySelector(
                 EntitySelectorConfig(domain=SENSOR_DOMAIN)
@@ -170,13 +193,43 @@ class EvAutoSmartChargeOptionsFlow(OptionsFlow):
             return self.async_create_entry(title="", data=user_input)
 
         merged = {**self.config_entry.data, **self.config_entry.options}
-        schema = _SchemaStripOptionalTargets(
+        schema = _SchemaStripOptionalEntities(
             {
                 vol.Optional(CONF_EV1_TARGET_SOC_SENSOR): EntitySelector(
                     EntitySelectorConfig(domain=_TARGET_ENTITY_DOMAINS)
                 ),
                 vol.Optional(CONF_EV2_TARGET_SOC_SENSOR): EntitySelector(
                     EntitySelectorConfig(domain=_TARGET_ENTITY_DOMAINS)
+                ),
+                vol.Optional(CONF_EV1_HOME_ENTITY): EntitySelector(
+                    EntitySelectorConfig(domain=_HOME_ENTITY_DOMAINS)
+                ),
+                vol.Optional(CONF_EV2_HOME_ENTITY): EntitySelector(
+                    EntitySelectorConfig(domain=_HOME_ENTITY_DOMAINS)
+                ),
+                vol.Required(
+                    CONF_CHARGE_PRIORITY,
+                    default=merged.get(
+                        CONF_CHARGE_PRIORITY, DEFAULT_CHARGE_PRIORITY
+                    ),
+                ): SelectSelector(
+                    SelectSelectorConfig(
+                        options=[
+                            {
+                                "value": CHARGE_PRIORITY_EV1_FIRST,
+                                "label": "EV 1 first",
+                            },
+                            {
+                                "value": CHARGE_PRIORITY_EV2_FIRST,
+                                "label": "EV 2 first",
+                            },
+                            {
+                                "value": CHARGE_PRIORITY_BALANCED,
+                                "label": "Balanced (by kWh)",
+                            },
+                        ],
+                        mode=SelectSelectorMode.DROPDOWN,
+                    )
                 ),
                 vol.Required(
                     CONF_EV1_CAPACITY_KWH,
