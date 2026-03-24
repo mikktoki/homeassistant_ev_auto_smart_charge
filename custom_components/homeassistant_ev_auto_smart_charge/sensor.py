@@ -1,0 +1,92 @@
+"""Sensor exposing the cheapest-hour charge plan."""
+
+from __future__ import annotations
+
+from homeassistant.components.sensor import SensorEntity, SensorEntityDescription
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
+
+from .const import DOMAIN
+from .coordinator import EvAutoSmartChargeCoordinator, PlanResult
+
+
+async def async_setup_entry(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
+    coordinator: EvAutoSmartChargeCoordinator = hass.data[DOMAIN][entry.entry_id]
+    async_add_entities([ChargePlanSensor(coordinator, entry)])
+
+
+class ChargePlanSensor(CoordinatorEntity[EvAutoSmartChargeCoordinator], SensorEntity):
+    """Estimated cost to charge both EVs in the cheapest upcoming hours."""
+
+    _attr_has_entity_name = True
+    entity_description = SensorEntityDescription(
+        key="charge_plan",
+        translation_key="charge_plan",
+    )
+
+    def __init__(
+        self, coordinator: EvAutoSmartChargeCoordinator, entry: ConfigEntry
+    ) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{entry.entry_id}_charge_plan"
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, entry.entry_id)},
+            "name": entry.title,
+            "manufacturer": "homeassistant-ev_auto_smart_charge",
+            "model": "EV Auto Smart Charge",
+        }
+
+    @property
+    def native_value(self) -> float | str | None:
+        data = self.coordinator.data
+        if not isinstance(data, PlanResult):
+            return None
+        if data.error:
+            return None
+        if data.total_kwh_needed <= 0:
+            return 0.0
+        return data.estimated_cost
+
+    @property
+    def native_unit_of_measurement(self) -> str | None:
+        data = self.coordinator.data
+        if isinstance(data, PlanResult) and data.currency:
+            return str(data.currency)
+        return None
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        data = self.coordinator.data
+        if not isinstance(data, PlanResult):
+            return {}
+
+        attrs = {
+            "ev1_soc_percent": data.ev1_soc,
+            "ev2_soc_percent": data.ev2_soc,
+            "ev1_kwh_needed": round(data.ev1_kwh_needed, 3),
+            "ev2_kwh_needed": round(data.ev2_kwh_needed, 3),
+            "total_kwh_needed": round(data.total_kwh_needed, 3),
+            "hours_to_charge": data.hours_to_charge,
+            "charger_power_kw": data.charger_power_kw,
+            "cheapest_hours": data.selected_slots,
+            "price_unit": data.price_unit,
+            "tomorrow_prices_valid": data.tomorrow_valid,
+        }
+        if data.error:
+            attrs["error"] = data.error
+        if data.estimated_cost is not None and data.total_kwh_needed > 0:
+            attrs["estimated_total_cost"] = round(data.estimated_cost, 4)
+            attrs["effective_price_per_kwh"] = round(
+                data.estimated_cost / data.total_kwh_needed, 6
+            )
+        return attrs
+
+    @property
+    def available(self) -> bool:
+        return isinstance(self.coordinator.data, PlanResult)

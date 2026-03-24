@@ -1,0 +1,39 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "EV Auto Smart Charge",
+        "description": "Pick the Energi Data Service sensor (hourly raw_today/raw_tomorrow) and the battery % entities from Tesla Custom and Volkswagen Connect.",
+        "data": {
+          "price_sensor": "Spot price sensor (Energi Data Service)",
+          "ev1_soc_sensor": "EV 1 battery level (%)",
+          "ev2_soc_sensor": "EV 2 battery level (%)",
+          "ev1_capacity_kwh": "EV 1 usable battery capacity (kWh)",
+          "ev2_capacity_kwh": "EV 2 usable battery capacity (kWh)",
+          "charger_power_kw": "Wallbox power (kW), combined if one charger",
+          "target_soc_percent": "Target state of charge (%)"
+        }
+      }
+    },
+    "options": {
+      "step": {
+        "init": {
+          "title": "Planner settings",
+          "data": {
+            "ev1_capacity_kwh": "EV 1 usable battery capacity (kWh)",
+            "ev2_capacity_kwh": "EV 2 usable battery capacity (kWh)",
+            "charger_power_kw": "Wallbox power (kW)",
+            "target_soc_percent": "Target state of charge (%)"
+          }
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "charge_plan": {
+        "name": "Charge plan"
+      }
+    }
+  }
+}

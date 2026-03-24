@@ -1,0 +1,11 @@
+{
+  "domain": "homeassistant_ev_auto_smart_charge",
+  "name": "EV Auto Smart Charge",
+  "codeowners": [],
+  "config_flow": true,
+  "documentation": "https://github.com/mikkel/homeassistant-ev_auto_smart_charge",
+  "integration_type": "hub",
+  "iot_class": "calculated",
+  "requirements": [],
+  "version": "1.0.0"
+}
