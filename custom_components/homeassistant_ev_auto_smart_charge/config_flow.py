@@ -52,8 +52,17 @@ def _strip_empty_optional_target_entities(data: Any) -> Any:
     return cleaned
 
 
+class _SchemaStripOptionalTargets(vol.Schema):
+    """Keep schema.schema as a dict (required by HA form UI); strip '' before submit."""
+
+    def __call__(self, data: Any) -> Any:
+        if isinstance(data, dict):
+            data = _strip_empty_optional_target_entities(dict(data))
+        return super().__call__(data)
+
+
 def _user_schema_defaults(data: dict) -> vol.Schema:
-    inner = vol.Schema(
+    return _SchemaStripOptionalTargets(
         {
             vol.Required(CONF_PRICE_SENSOR, default=data.get(CONF_PRICE_SENSOR, "")): EntitySelector(
                 EntitySelectorConfig(domain=SENSOR_DOMAIN)
@@ -116,7 +125,6 @@ def _user_schema_defaults(data: dict) -> vol.Schema:
             ),
         }
     )
-    return vol.Schema(vol.All(_strip_empty_optional_target_entities, inner))
 
 
 class EvAutoSmartChargeConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -162,7 +170,7 @@ class EvAutoSmartChargeOptionsFlow(OptionsFlow):
             return self.async_create_entry(title="", data=user_input)
 
         merged = {**self.config_entry.data, **self.config_entry.options}
-        inner = vol.Schema(
+        schema = _SchemaStripOptionalTargets(
             {
                 vol.Optional(CONF_EV1_TARGET_SOC_SENSOR): EntitySelector(
                     EntitySelectorConfig(domain=_TARGET_ENTITY_DOMAINS)
@@ -216,6 +224,5 @@ class EvAutoSmartChargeOptionsFlow(OptionsFlow):
                 ),
             }
         )
-        schema = vol.Schema(vol.All(_strip_empty_optional_target_entities, inner))
 
         return self.async_show_form(step_id="init", data_schema=schema)
