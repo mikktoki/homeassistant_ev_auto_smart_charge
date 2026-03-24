@@ -8,7 +8,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN
+from .const import DOMAIN, INTEGRATION_VERSION
 from .coordinator import EvAutoSmartChargeCoordinator, PlanResult
 
 
@@ -40,6 +40,7 @@ class ChargePlanSensor(CoordinatorEntity[EvAutoSmartChargeCoordinator], SensorEn
             "name": entry.title,
             "manufacturer": "homeassistant-ev_auto_smart_charge",
             "model": "EV Auto Smart Charge",
+            "sw_version": INTEGRATION_VERSION,
         }
 
     @property
@@ -75,6 +76,9 @@ class ChargePlanSensor(CoordinatorEntity[EvAutoSmartChargeCoordinator], SensorEn
             "hours_to_charge": data.hours_to_charge,
             "charger_power_kw": data.charger_power_kw,
             "cheapest_hours": data.selected_slots,
+            "charging_window_start": data.charging_window_start,
+            "charging_window_end": data.charging_window_end,
+            "charging_schedule_summary": data.charging_schedule_summary,
             "price_unit": data.price_unit,
             "tomorrow_prices_valid": data.tomorrow_valid,
         }
@@ -85,6 +89,10 @@ class ChargePlanSensor(CoordinatorEntity[EvAutoSmartChargeCoordinator], SensorEn
             attrs["effective_price_per_kwh"] = round(
                 data.estimated_cost / data.total_kwh_needed, 6
             )
+        if data.estimated_ev1_cost is not None:
+            attrs["estimated_ev1_cost"] = round(data.estimated_ev1_cost, 4)
+        if data.estimated_ev2_cost is not None:
+            attrs["estimated_ev2_cost"] = round(data.estimated_ev2_cost, 4)
         return attrs
 
     @property

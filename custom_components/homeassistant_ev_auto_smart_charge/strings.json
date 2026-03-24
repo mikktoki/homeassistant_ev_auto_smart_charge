@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "EV Auto Smart Charge",
-        "description": "Pick the Energi Data Service sensor (hourly raw_today/raw_tomorrow) and the battery % entities from Tesla Custom and Volkswagen Connect.",
+        "description": "Pick the Energi Data Service sensor (hourly raw_today/raw_tomorrow) and a battery / SOC entity per EV (numeric state or common attributes such as battery_level). The plan uses SOC to estimate kWh to add, spot cost, per-EV cost share, and scheduled cheap hours.",
         "data": {
           "price_sensor": "Spot price sensor (Energi Data Service)",
           "ev1_soc_sensor": "EV 1 battery level (%)",

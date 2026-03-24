@@ -41,13 +41,64 @@ def _parse_hour(value: Any) -> datetime | None:
     return None
 
 
-def _float_state(state: State | None) -> float | None:
-    if state is None or state.state in ("unknown", "unavailable", None, ""):
+_SOC_ATTR_KEYS = (
+    "battery_level",
+    "state_of_charge",
+    "soc",
+    "battery_soc",
+)
+
+
+def _parse_float_maybe_percent(value: Any) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    s = str(value).strip().replace(",", ".")
+    if s.endswith("%"):
+        s = s[:-1].strip()
+    if not s or s in ("unknown", "unavailable"):
         return None
     try:
-        return float(state.state)
+        return float(s)
     except (TypeError, ValueError):
         return None
+
+
+def _normalize_soc_to_percent(raw: float, unit: str | None) -> float:
+    u = (unit or "").strip().lower()
+    if u == "%":
+        return max(0.0, min(100.0, raw))
+    if 0.0 < raw <= 1.0:
+        return max(0.0, min(100.0, raw * 100.0))
+    return max(0.0, min(100.0, raw))
+
+
+def _soc_percent_from_ev_state(state: State | None) -> float | None:
+    """Battery % from entity state or common EV integration attributes."""
+
+    if state is None or state.state in ("unknown", "unavailable"):
+        return None
+
+    unit = state.attributes.get("unit_of_measurement")
+    unit_str = str(unit).strip() if unit is not None else None
+
+    val = None
+    if state.state not in (None, ""):
+        val = _parse_float_maybe_percent(state.state)
+
+    if val is None:
+        for key in _SOC_ATTR_KEYS:
+            if key not in state.attributes:
+                continue
+            val = _parse_float_maybe_percent(state.attributes.get(key))
+            if val is not None:
+                break
+
+    if val is None:
+        return None
+
+    return _normalize_soc_to_percent(val, unit_str)
 
 
 def _merge_price_slots_from_attributes(
@@ -98,6 +149,11 @@ class PlanResult:
     charger_power_kw: float
     selected_slots: list[dict[str, Any]]
     estimated_cost: float | None
+    estimated_ev1_cost: float | None
+    estimated_ev2_cost: float | None
+    charging_window_start: str | None
+    charging_window_end: str | None
+    charging_schedule_summary: str | None
     currency: str | None
     price_unit: str | None
     tomorrow_valid: bool | None
@@ -154,6 +210,11 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
                 charger_power_kw=charger_kw,
                 selected_slots=[],
                 estimated_cost=None,
+                estimated_ev1_cost=None,
+                estimated_ev2_cost=None,
+                charging_window_start=None,
+                charging_window_end=None,
+                charging_schedule_summary=None,
                 currency=None,
                 price_unit=None,
                 tomorrow_valid=None,
@@ -164,8 +225,8 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
         s2 = self.hass.states.get(self.ev2_soc_sensor)
         ps = self.hass.states.get(self.price_sensor)
 
-        soc1 = _float_state(s1)
-        soc2 = _float_state(s2)
+        soc1 = _soc_percent_from_ev_state(s1)
+        soc2 = _soc_percent_from_ev_state(s2)
 
         kwh1 = (
             max(0.0, cap1 * max(0.0, target - soc1) / 100.0) if soc1 is not None else 0.0
@@ -185,6 +246,11 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
                 charger_power_kw=charger_kw,
                 selected_slots=[],
                 estimated_cost=None,
+                estimated_ev1_cost=None,
+                estimated_ev2_cost=None,
+                charging_window_start=None,
+                charging_window_end=None,
+                charging_schedule_summary=None,
                 currency=None,
                 price_unit=None,
                 tomorrow_valid=None,
@@ -203,6 +269,11 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
                 charger_power_kw=charger_kw,
                 selected_slots=[],
                 estimated_cost=0.0,
+                estimated_ev1_cost=0.0,
+                estimated_ev2_cost=0.0,
+                charging_window_start=None,
+                charging_window_end=None,
+                charging_schedule_summary=None,
                 currency=ps.attributes.get("currency") if ps else None,
                 price_unit=ps.attributes.get("unit") if ps else None,
                 tomorrow_valid=ps.attributes.get("tomorrow_valid") if ps else None,
@@ -221,6 +292,11 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
                 charger_power_kw=charger_kw,
                 selected_slots=[],
                 estimated_cost=None,
+                estimated_ev1_cost=None,
+                estimated_ev2_cost=None,
+                charging_window_start=None,
+                charging_window_end=None,
+                charging_schedule_summary=None,
                 currency=ps.attributes.get("currency") if ps else None,
                 price_unit=ps.attributes.get("unit") if ps else None,
                 tomorrow_valid=ps.attributes.get("tomorrow_valid") if ps else None,
@@ -241,6 +317,11 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
                 charger_power_kw=charger_kw,
                 selected_slots=[],
                 estimated_cost=None,
+                estimated_ev1_cost=None,
+                estimated_ev2_cost=None,
+                charging_window_start=None,
+                charging_window_end=None,
+                charging_schedule_summary=None,
                 currency=ps.attributes.get("currency") if ps else None,
                 price_unit=ps.attributes.get("unit") if ps else None,
                 tomorrow_valid=ps.attributes.get("tomorrow_valid") if ps else None,
@@ -253,6 +334,20 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
         chosen.sort(key=lambda x: x[0])
 
         est_cost = sum(p * charger_kw for _, p in chosen)
+        ev1_cost = est_cost * (kwh1 / total_kwh)
+        ev2_cost = est_cost * (kwh2 / total_kwh)
+
+        first_h, _ = chosen[0]
+        last_h, _ = chosen[-1]
+        start_local = dt_util.as_local(first_h)
+        end_local = dt_util.as_local(last_h) + timedelta(hours=1)
+        window_start_iso = start_local.isoformat()
+        window_end_iso = end_local.isoformat()
+        schedule_summary = (
+            f"{start_local.strftime('%a %Y-%m-%d %H:%M')}–{end_local.strftime('%H:%M')} "
+            f"local ({hours_needed} h)"
+        )
+
         selected = [
             {
                 "hour": h.isoformat(),
@@ -272,6 +367,11 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
             charger_power_kw=charger_kw,
             selected_slots=selected,
             estimated_cost=est_cost,
+            estimated_ev1_cost=ev1_cost,
+            estimated_ev2_cost=ev2_cost,
+            charging_window_start=window_start_iso,
+            charging_window_end=window_end_iso,
+            charging_schedule_summary=schedule_summary,
             currency=ps.attributes.get("currency") if ps else None,
             price_unit=ps.attributes.get("unit") if ps else None,
             tomorrow_valid=ps.attributes.get("tomorrow_valid") if ps else None,
