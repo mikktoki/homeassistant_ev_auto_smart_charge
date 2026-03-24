@@ -16,6 +16,15 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 
+def _entries_for_device(
+    registry: er.EntityRegistry, device_id: str
+) -> list[RegistryEntry]:
+    """HA compatibility: older cores have no include_disabled on async_entries_for_device."""
+
+    entries = er.async_entries_for_device(registry, device_id)
+    return [e for e in entries if not e.disabled_by]
+
+
 @dataclass
 class ResolvedEVDevice:
     """Entities discovered on one vehicle device."""
@@ -132,7 +141,7 @@ def resolve_ev_from_device(hass: HomeAssistant, device_id: str) -> ResolvedEVDev
     """Pick SOC, charge limit, plug/cable, and location entities for a device."""
 
     registry = er.async_get(hass)
-    entries = er.async_entries_for_device(registry, device_id, include_disabled=False)
+    entries = _entries_for_device(registry, device_id)
     if not entries:
         _LOGGER.warning("No entities on device %s", device_id)
         return ResolvedEVDevice(device_id=device_id)
@@ -155,7 +164,7 @@ def entity_ids_for_device(hass: HomeAssistant, device_id: str) -> list[str]:
     """All entity ids on a device (for state subscriptions)."""
 
     registry = er.async_get(hass)
-    entries = er.async_entries_for_device(registry, device_id, include_disabled=False)
+    entries = _entries_for_device(registry, device_id)
     return [e.entity_id for e in entries]
 
 

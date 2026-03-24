@@ -1,7 +1,7 @@
 """Constants for homeassistant_ev_auto_smart_charge."""
 
 # Semantic version for HACS / Home Assistant (must match manifest.json "version").
-INTEGRATION_VERSION = "0.0.5"
+INTEGRATION_VERSION = "0.0.6"
 
 DOMAIN = "homeassistant_ev_auto_smart_charge"
 
