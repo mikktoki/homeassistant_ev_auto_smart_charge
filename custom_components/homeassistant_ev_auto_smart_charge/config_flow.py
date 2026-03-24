@@ -24,14 +24,18 @@ from .const import (
     CONF_CHARGER_POWER_KW,
     CONF_EV1_CAPACITY_KWH,
     CONF_EV1_SOC_SENSOR,
+    CONF_EV1_TARGET_SOC_SENSOR,
     CONF_EV2_CAPACITY_KWH,
     CONF_EV2_SOC_SENSOR,
+    CONF_EV2_TARGET_SOC_SENSOR,
     CONF_PRICE_SENSOR,
     CONF_TARGET_SOC_PERCENT,
     DEFAULT_CHARGER_KW,
     DEFAULT_TARGET_SOC,
     DOMAIN,
 )
+
+_TARGET_ENTITY_DOMAINS = (SENSOR_DOMAIN, "number", "input_number")
 
 
 def _user_schema_defaults(data: dict) -> vol.Schema:
@@ -45,6 +49,18 @@ def _user_schema_defaults(data: dict) -> vol.Schema:
             ),
             vol.Required(CONF_EV2_SOC_SENSOR, default=data.get(CONF_EV2_SOC_SENSOR, "")): EntitySelector(
                 EntitySelectorConfig(domain=SENSOR_DOMAIN)
+            ),
+            vol.Optional(
+                CONF_EV1_TARGET_SOC_SENSOR,
+                default=data.get(CONF_EV1_TARGET_SOC_SENSOR),
+            ): EntitySelector(
+                EntitySelectorConfig(domain=_TARGET_ENTITY_DOMAINS)
+            ),
+            vol.Optional(
+                CONF_EV2_TARGET_SOC_SENSOR,
+                default=data.get(CONF_EV2_TARGET_SOC_SENSOR),
+            ): EntitySelector(
+                EntitySelectorConfig(domain=_TARGET_ENTITY_DOMAINS)
             ),
             vol.Required(
                 CONF_EV1_CAPACITY_KWH,
@@ -139,6 +155,18 @@ class EvAutoSmartChargeOptionsFlow(OptionsFlow):
         merged = {**self.config_entry.data, **self.config_entry.options}
         schema = vol.Schema(
             {
+                vol.Optional(
+                    CONF_EV1_TARGET_SOC_SENSOR,
+                    default=merged.get(CONF_EV1_TARGET_SOC_SENSOR),
+                ): EntitySelector(
+                    EntitySelectorConfig(domain=_TARGET_ENTITY_DOMAINS)
+                ),
+                vol.Optional(
+                    CONF_EV2_TARGET_SOC_SENSOR,
+                    default=merged.get(CONF_EV2_TARGET_SOC_SENSOR),
+                ): EntitySelector(
+                    EntitySelectorConfig(domain=_TARGET_ENTITY_DOMAINS)
+                ),
                 vol.Required(
                     CONF_EV1_CAPACITY_KWH,
                     default=merged.get(CONF_EV1_CAPACITY_KWH, 75.0),

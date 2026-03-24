@@ -70,6 +70,8 @@ class ChargePlanSensor(CoordinatorEntity[EvAutoSmartChargeCoordinator], SensorEn
         attrs = {
             "ev1_soc_percent": data.ev1_soc,
             "ev2_soc_percent": data.ev2_soc,
+            "ev1_target_soc_percent": data.ev1_target_percent,
+            "ev2_target_soc_percent": data.ev2_target_percent,
             "ev1_kwh_needed": round(data.ev1_kwh_needed, 3),
             "ev2_kwh_needed": round(data.ev2_kwh_needed, 3),
             "total_kwh_needed": round(data.total_kwh_needed, 3),

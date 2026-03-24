@@ -18,8 +18,10 @@ from .const import (
     CONF_CHARGER_POWER_KW,
     CONF_EV1_CAPACITY_KWH,
     CONF_EV1_SOC_SENSOR,
+    CONF_EV1_TARGET_SOC_SENSOR,
     CONF_EV2_CAPACITY_KWH,
     CONF_EV2_SOC_SENSOR,
+    CONF_EV2_TARGET_SOC_SENSOR,
     CONF_PRICE_SENSOR,
     CONF_TARGET_SOC_PERCENT,
     DEFAULT_CHARGER_KW,
@@ -101,6 +103,26 @@ def _soc_percent_from_ev_state(state: State | None) -> float | None:
     return _normalize_soc_to_percent(val, unit_str)
 
 
+def _target_soc_percent_from_config(
+    hass: HomeAssistant, opt: dict[str, Any], sensor_key: str
+) -> tuple[float | None, str | None]:
+    """Resolve target SOC %: optional entity, else CONF_TARGET_SOC_PERCENT."""
+
+    raw_id = opt.get(sensor_key)
+    entity_id = (str(raw_id).strip() if raw_id else "") or ""
+    if not entity_id:
+        return (
+            float(opt.get(CONF_TARGET_SOC_PERCENT, DEFAULT_TARGET_SOC)),
+            None,
+        )
+
+    st = hass.states.get(entity_id)
+    pct = _soc_percent_from_ev_state(st)
+    if pct is None:
+        return (None, "Target SOC entity unavailable")
+    return (pct, None)
+
+
 def _merge_price_slots_from_attributes(
     attrs: dict[str, Any],
 ) -> list[tuple[datetime, float]]:
@@ -158,6 +180,8 @@ class PlanResult:
     price_unit: str | None
     tomorrow_valid: bool | None
     error: str | None
+    ev1_target_percent: float | None = None
+    ev2_target_percent: float | None = None
 
 
 class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
@@ -197,7 +221,6 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
         cap1 = float(opt[CONF_EV1_CAPACITY_KWH])
         cap2 = float(opt[CONF_EV2_CAPACITY_KWH])
         charger_kw = float(opt.get(CONF_CHARGER_POWER_KW, DEFAULT_CHARGER_KW))
-        target = float(opt.get(CONF_TARGET_SOC_PERCENT, DEFAULT_TARGET_SOC))
 
         if charger_kw <= 0:
             return PlanResult(
@@ -221,6 +244,36 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
                 error="charger_power_kw must be positive",
             )
 
+        target1, terr1 = _target_soc_percent_from_config(
+            self.hass, opt, CONF_EV1_TARGET_SOC_SENSOR
+        )
+        target2, terr2 = _target_soc_percent_from_config(
+            self.hass, opt, CONF_EV2_TARGET_SOC_SENSOR
+        )
+        if terr1 or terr2:
+            return PlanResult(
+                ev1_soc=None,
+                ev2_soc=None,
+                ev1_kwh_needed=0.0,
+                ev2_kwh_needed=0.0,
+                total_kwh_needed=0.0,
+                hours_to_charge=0,
+                charger_power_kw=charger_kw,
+                selected_slots=[],
+                estimated_cost=None,
+                estimated_ev1_cost=None,
+                estimated_ev2_cost=None,
+                charging_window_start=None,
+                charging_window_end=None,
+                charging_schedule_summary=None,
+                currency=None,
+                price_unit=None,
+                tomorrow_valid=None,
+                error=terr1 or terr2,
+                ev1_target_percent=target1,
+                ev2_target_percent=target2,
+            )
+
         s1 = self.hass.states.get(self.ev1_soc_sensor)
         s2 = self.hass.states.get(self.ev2_soc_sensor)
         ps = self.hass.states.get(self.price_sensor)
@@ -229,10 +282,14 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
         soc2 = _soc_percent_from_ev_state(s2)
 
         kwh1 = (
-            max(0.0, cap1 * max(0.0, target - soc1) / 100.0) if soc1 is not None else 0.0
+            max(0.0, cap1 * max(0.0, target1 - soc1) / 100.0)
+            if soc1 is not None
+            else 0.0
         )
         kwh2 = (
-            max(0.0, cap2 * max(0.0, target - soc2) / 100.0) if soc2 is not None else 0.0
+            max(0.0, cap2 * max(0.0, target2 - soc2) / 100.0)
+            if soc2 is not None
+            else 0.0
         )
 
         if soc1 is None or soc2 is None:
@@ -255,6 +312,8 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
                 price_unit=None,
                 tomorrow_valid=None,
                 error="EV SOC sensor unavailable",
+                ev1_target_percent=target1,
+                ev2_target_percent=target2,
             )
 
         total_kwh = kwh1 + kwh2
@@ -278,6 +337,8 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
                 price_unit=ps.attributes.get("unit") if ps else None,
                 tomorrow_valid=ps.attributes.get("tomorrow_valid") if ps else None,
                 error=None,
+                ev1_target_percent=target1,
+                ev2_target_percent=target2,
             )
 
         slots = _merge_price_slots(self.hass, self.price_sensor)
@@ -301,6 +362,8 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
                 price_unit=ps.attributes.get("unit") if ps else None,
                 tomorrow_valid=ps.attributes.get("tomorrow_valid") if ps else None,
                 error="No hourly prices (check Energi Data Service sensor and raw_today/raw_tomorrow)",
+                ev1_target_percent=target1,
+                ev2_target_percent=target2,
             )
 
         now = dt_util.now()
@@ -326,6 +389,8 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
                 price_unit=ps.attributes.get("unit") if ps else None,
                 tomorrow_valid=ps.attributes.get("tomorrow_valid") if ps else None,
                 error="No future price hours in raw data",
+                ev1_target_percent=target1,
+                ev2_target_percent=target2,
             )
 
         hours_needed = int(math.ceil(total_kwh / charger_kw))
@@ -376,6 +441,8 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
             price_unit=ps.attributes.get("unit") if ps else None,
             tomorrow_valid=ps.attributes.get("tomorrow_valid") if ps else None,
             error=None,
+            ev1_target_percent=target1,
+            ev2_target_percent=target2,
         )
 
     @callback
@@ -393,6 +460,13 @@ def setup_coordinator_state_listener(
         coordinator.ev1_soc_sensor,
         coordinator.ev2_soc_sensor,
     ]
+    opt = {**coordinator.config_entry.data, **coordinator.config_entry.options}
+    for key in (CONF_EV1_TARGET_SOC_SENSOR, CONF_EV2_TARGET_SOC_SENSOR):
+        eid = opt.get(key)
+        if eid and str(eid).strip():
+            entities.append(str(eid).strip())
+
+    entities = list(dict.fromkeys(entities))
 
     @callback
     def _on_state(event: Any) -> None:

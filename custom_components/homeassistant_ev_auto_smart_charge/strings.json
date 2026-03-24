@@ -8,10 +8,12 @@
           "price_sensor": "Spot price sensor (Energi Data Service)",
           "ev1_soc_sensor": "EV 1 battery level (%)",
           "ev2_soc_sensor": "EV 2 battery level (%)",
+          "ev1_target_soc_sensor": "EV 1 target charge limit (optional entity)",
+          "ev2_target_soc_sensor": "EV 2 target charge limit (optional entity)",
           "ev1_capacity_kwh": "EV 1 usable battery capacity (kWh)",
           "ev2_capacity_kwh": "EV 2 usable battery capacity (kWh)",
           "charger_power_kw": "Wallbox power (kW), combined if one charger",
-          "target_soc_percent": "Target state of charge (%)"
+          "target_soc_percent": "Fallback target SOC (%) if no per-EV entity above"
         }
       }
     },
@@ -23,7 +25,9 @@
             "ev1_capacity_kwh": "EV 1 usable battery capacity (kWh)",
             "ev2_capacity_kwh": "EV 2 usable battery capacity (kWh)",
             "charger_power_kw": "Wallbox power (kW)",
-            "target_soc_percent": "Target state of charge (%)"
+            "ev1_target_soc_sensor": "EV 1 target charge limit (optional entity)",
+            "ev2_target_soc_sensor": "EV 2 target charge limit (optional entity)",
+            "target_soc_percent": "Fallback target SOC (%) if no per-EV entity above"
           }
         }
       }
