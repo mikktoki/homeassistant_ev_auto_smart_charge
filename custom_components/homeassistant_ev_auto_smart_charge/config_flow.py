@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import voluptuous as vol
 
 from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN
@@ -35,11 +37,23 @@ from .const import (
     DOMAIN,
 )
 
-_TARGET_ENTITY_DOMAINS = (SENSOR_DOMAIN, "number", "input_number")
+_TARGET_ENTITY_DOMAINS: list[str] = [SENSOR_DOMAIN, "number", "input_number"]
+
+
+def _strip_empty_optional_target_entities(data: Any) -> Any:
+    """Entity selectors reject ''; optional targets must omit the key instead."""
+
+    if not isinstance(data, dict):
+        return data
+    cleaned = dict(data)
+    for key in (CONF_EV1_TARGET_SOC_SENSOR, CONF_EV2_TARGET_SOC_SENSOR):
+        if cleaned.get(key) in (None, ""):
+            cleaned.pop(key, None)
+    return cleaned
 
 
 def _user_schema_defaults(data: dict) -> vol.Schema:
-    return vol.Schema(
+    inner = vol.Schema(
         {
             vol.Required(CONF_PRICE_SENSOR, default=data.get(CONF_PRICE_SENSOR, "")): EntitySelector(
                 EntitySelectorConfig(domain=SENSOR_DOMAIN)
@@ -50,16 +64,10 @@ def _user_schema_defaults(data: dict) -> vol.Schema:
             vol.Required(CONF_EV2_SOC_SENSOR, default=data.get(CONF_EV2_SOC_SENSOR, "")): EntitySelector(
                 EntitySelectorConfig(domain=SENSOR_DOMAIN)
             ),
-            vol.Optional(
-                CONF_EV1_TARGET_SOC_SENSOR,
-                default=data.get(CONF_EV1_TARGET_SOC_SENSOR),
-            ): EntitySelector(
+            vol.Optional(CONF_EV1_TARGET_SOC_SENSOR): EntitySelector(
                 EntitySelectorConfig(domain=_TARGET_ENTITY_DOMAINS)
             ),
-            vol.Optional(
-                CONF_EV2_TARGET_SOC_SENSOR,
-                default=data.get(CONF_EV2_TARGET_SOC_SENSOR),
-            ): EntitySelector(
+            vol.Optional(CONF_EV2_TARGET_SOC_SENSOR): EntitySelector(
                 EntitySelectorConfig(domain=_TARGET_ENTITY_DOMAINS)
             ),
             vol.Required(
@@ -108,6 +116,7 @@ def _user_schema_defaults(data: dict) -> vol.Schema:
             ),
         }
     )
+    return vol.Schema(vol.All(_strip_empty_optional_target_entities, inner))
 
 
 class EvAutoSmartChargeConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -153,18 +162,12 @@ class EvAutoSmartChargeOptionsFlow(OptionsFlow):
             return self.async_create_entry(title="", data=user_input)
 
         merged = {**self.config_entry.data, **self.config_entry.options}
-        schema = vol.Schema(
+        inner = vol.Schema(
             {
-                vol.Optional(
-                    CONF_EV1_TARGET_SOC_SENSOR,
-                    default=merged.get(CONF_EV1_TARGET_SOC_SENSOR),
-                ): EntitySelector(
+                vol.Optional(CONF_EV1_TARGET_SOC_SENSOR): EntitySelector(
                     EntitySelectorConfig(domain=_TARGET_ENTITY_DOMAINS)
                 ),
-                vol.Optional(
-                    CONF_EV2_TARGET_SOC_SENSOR,
-                    default=merged.get(CONF_EV2_TARGET_SOC_SENSOR),
-                ): EntitySelector(
+                vol.Optional(CONF_EV2_TARGET_SOC_SENSOR): EntitySelector(
                     EntitySelectorConfig(domain=_TARGET_ENTITY_DOMAINS)
                 ),
                 vol.Required(
@@ -213,5 +216,6 @@ class EvAutoSmartChargeOptionsFlow(OptionsFlow):
                 ),
             }
         )
+        schema = vol.Schema(vol.All(_strip_empty_optional_target_entities, inner))
 
         return self.async_show_form(step_id="init", data_schema=schema)
