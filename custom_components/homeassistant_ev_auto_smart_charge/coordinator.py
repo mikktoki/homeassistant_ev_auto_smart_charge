@@ -411,12 +411,12 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
         if slot == 1:
             did = opt.get(CONF_EV1_DEVICE_ID)
             if did:
-                return resolve_ev_from_device(self.hass, did)
+                return resolve_ev_from_device(self.hass, did, plug_platform="tesla")
             soc = (str(opt.get(CONF_EV1_SOC_SENSOR) or "")).strip()
             return ResolvedEVDevice(device_id="", soc_entity_id=soc or None)
         did = opt.get(CONF_EV2_DEVICE_ID)
         if did:
-            return resolve_ev_from_device(self.hass, did)
+            return resolve_ev_from_device(self.hass, did, plug_platform="vw")
         soc = (str(opt.get(CONF_EV2_SOC_SENSOR) or "")).strip()
         return ResolvedEVDevice(device_id="", soc_entity_id=soc or None)
 
