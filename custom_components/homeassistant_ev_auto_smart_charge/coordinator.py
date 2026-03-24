@@ -318,38 +318,6 @@ def _sequential_energy_costs(
     return (c1, c2, c1 + c2)
 
 
-def _attribute_cheapest_plan_costs(
-    chosen: list[tuple[datetime, float]],
-    charger_kw: float,
-    ekwh1: float,
-    ekwh2: float,
-    priority: str,
-    est_cost: float,
-) -> tuple[float, float]:
-    ekwh_total = ekwh1 + ekwh2
-    if ekwh_total <= 1e-12:
-        return (0.0, 0.0)
-    if priority == CHARGE_PRIORITY_BALANCED:
-        c1 = est_cost * (ekwh1 / ekwh_total)
-        c2 = est_cost * (ekwh2 / ekwh_total)
-    else:
-        rem1, rem2 = ekwh1, ekwh2
-        c1 = c2 = 0.0
-        for _h, price in sorted(chosen, key=lambda x: x[0]):
-            if rem1 <= 1e-9 and rem2 <= 1e-9:
-                break
-            d1, d2, rem1, rem2 = _deliver_one_hour_kwh(
-                rem1, rem2, charger_kw, priority
-            )
-            c1 += price * d1
-            c2 += price * d2
-    if ekwh1 <= 1e-12:
-        c1 = 0.0
-    if ekwh2 <= 1e-12:
-        c2 = 0.0
-    return (c1, c2)
-
-
 def _solo_cheapest_cost_for_need(
     future: list[tuple[datetime, float]],
     charger_kw: float,
@@ -363,7 +331,16 @@ def _solo_cheapest_cost_for_need(
         return None
     hours = int(math.ceil(kwh_need / charger_kw))
     pick = sorted(future, key=lambda x: x[1])[:hours]
-    return sum(p * charger_kw for _, p in pick)
+    pick.sort(key=lambda x: x[1])
+    rem = kwh_need
+    total = 0.0
+    for _h, p in pick:
+        if rem <= 1e-12:
+            break
+        take = min(charger_kw, rem)
+        total += p * take
+        rem -= take
+    return total
 
 
 @dataclass
@@ -729,11 +706,6 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
         chosen = sorted_by_price[:hours_needed]
         chosen.sort(key=lambda x: x[0])
 
-        est_cost = sum(p * charger_kw for _, p in chosen)
-        ev1_cost, ev2_cost = _attribute_cheapest_plan_costs(
-            chosen, charger_kw, ekwh1, ekwh2, priority, est_cost
-        )
-
         first_h, _ = chosen[0]
         last_h, _ = chosen[-1]
         start_local = dt_util.as_local(first_h)
@@ -747,10 +719,16 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
 
         rem1, rem2 = ekwh1, ekwh2
         selected: list[dict[str, Any]] = []
+        est_cost = 0.0
+        ev1_cost = 0.0
+        ev2_cost = 0.0
         for h, p in chosen:
             d1, d2, rem1, rem2 = _deliver_one_hour_kwh(
                 rem1, rem2, charger_kw, priority
             )
+            ev1_cost += p * d1
+            ev2_cost += p * d2
+            est_cost += p * (d1 + d2)
             selected.append(
                 {
                     "hour": h.isoformat(),
@@ -760,6 +738,10 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
                     "ev2_kwh": round(d2, 4),
                 }
             )
+        if ekwh1 <= 1e-12:
+            ev1_cost = 0.0
+        if ekwh2 <= 1e-12:
+            ev2_cost = 0.0
 
         return PlanResult(
             ev1_soc=soc1,
