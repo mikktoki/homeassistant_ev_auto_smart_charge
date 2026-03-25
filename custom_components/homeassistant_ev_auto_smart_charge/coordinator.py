@@ -4,14 +4,17 @@ from __future__ import annotations
 
 import logging
 import math
+
+_LOGGER = logging.getLogger(__name__)
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import STATE_OFF, STATE_ON
-from homeassistant.core import CALLBACK_TYPE, HomeAssistant, State, callback
+from homeassistant.core import CALLBACK_TYPE, HassJob, HomeAssistant, State, callback
 from homeassistant.helpers.event import async_track_state_change_event
+from homeassistant.helpers.start import async_at_started
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
@@ -793,13 +796,13 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
 
     @callback
     def _async_state_changed(self, _event: Any) -> None:
-        self.hass.async_create_task(self.async_request_refresh())
+        self.hass.async_run_hass_job(HassJob(self.async_request_refresh))
 
 
-def setup_coordinator_state_listener(
+def _tracked_entity_ids_for_coordinator(
     hass: HomeAssistant, coordinator: EvAutoSmartChargeCoordinator
-) -> CALLBACK_TYPE:
-    """Subscribe to price + all entities on each EV device (or legacy overrides)."""
+) -> list[str]:
+    """Entity IDs whose state/attribute changes should recompute the plan."""
 
     entities: list[str] = []
     opt = {**coordinator.config_entry.data, **coordinator.config_entry.options}
@@ -810,12 +813,28 @@ def setup_coordinator_state_listener(
         ps = opt.get(CONF_PRICE_SENSOR)
         if ps and str(ps).strip():
             entities.append(str(ps).strip())
-    if coordinator.price_sensor and coordinator.price_sensor not in entities:
-        entities.append(coordinator.price_sensor)
-    for dev_key in (CONF_EV1_DEVICE_ID, CONF_EV2_DEVICE_ID):
+    ps_resolved = coordinator.price_sensor
+    if ps_resolved and str(ps_resolved).strip():
+        entities.append(str(ps_resolved).strip())
+
+    for dev_key, plug_pf in (
+        (CONF_EV1_DEVICE_ID, "tesla"),
+        (CONF_EV2_DEVICE_ID, "vw"),
+    ):
         did = opt.get(dev_key)
-        if did:
-            entities.extend(entity_ids_for_device(hass, did))
+        if not did:
+            continue
+        entities.extend(entity_ids_for_device(hass, did))
+        resolved = resolve_ev_from_device(hass, did, plug_platform=plug_pf)
+        for eid in (
+            resolved.soc_entity_id,
+            resolved.target_entity_id,
+            resolved.connected_entity_id,
+            resolved.home_entity_id,
+        ):
+            if eid and str(eid).strip():
+                entities.append(str(eid).strip())
+
     for key in (CONF_EV1_HOME_ENTITY, CONF_EV2_HOME_ENTITY):
         eid = opt.get(key)
         if eid and str(eid).strip():
@@ -825,10 +844,40 @@ def setup_coordinator_state_listener(
         if eid and str(eid).strip():
             entities.append(str(eid).strip())
 
-    entities = list(dict.fromkeys(entities))
+    out = [e for e in entities if e and str(e).strip()]
+    return list(dict.fromkeys(out))
+
+
+def setup_coordinator_state_listener(
+    hass: HomeAssistant, coordinator: EvAutoSmartChargeCoordinator
+) -> CALLBACK_TYPE:
+    """Subscribe when HA is running; refresh on price/EV state and attribute updates."""
+
+    unsub_track: CALLBACK_TYPE | None = None
 
     @callback
-    def _on_state(event: Any) -> None:
-        coordinator._async_state_changed(event)
+    def _on_state(_event: Any) -> None:
+        coordinator._async_state_changed(_event)
 
-    return async_track_state_change_event(hass, entities, _on_state)
+    @callback
+    def _register_tracker(_hass: HomeAssistant) -> None:
+        nonlocal unsub_track
+        entities = _tracked_entity_ids_for_coordinator(_hass, coordinator)
+        if not entities:
+            _LOGGER.warning(
+                "No source entities to watch — plan updates only every %s minutes",
+                UPDATE_INTERVAL_MIN,
+            )
+            return
+        unsub_track = async_track_state_change_event(_hass, entities, _on_state)
+
+    unsub_at_started = async_at_started(hass, _register_tracker)
+
+    def _teardown() -> None:
+        nonlocal unsub_track
+        if unsub_track is not None:
+            unsub_track()
+            unsub_track = None
+        unsub_at_started()
+
+    return _teardown
