@@ -34,6 +34,7 @@ from .const import (
     CONF_EV2_DEVICE_ID,
     CONF_PRICE_DEVICE_ID,
     CONF_TARGET_SOC_PERCENT,
+    CONF_ZAPTEC_CHARGER_DEVICE_ID,
     ENERGI_DATA_SERVICE_INTEGRATIONS,
     DEFAULT_CHARGE_PRIORITY,
     DEFAULT_CHARGER_KW,
@@ -43,6 +44,7 @@ from .const import (
     DOMAIN,
     TESLA_DEVICE_INTEGRATIONS,
     VW_FAMILY_DEVICE_INTEGRATIONS,
+    ZAPTEC_DEVICE_INTEGRATIONS,
 )
 
 
@@ -56,6 +58,10 @@ def _vw_family_device_filter() -> list[dict[str, str]]:
 
 def _energi_device_filter() -> list[dict[str, str]]:
     return [{"integration": dom} for dom in ENERGI_DATA_SERVICE_INTEGRATIONS]
+
+
+def _zaptec_device_filter() -> list[dict[str, str]]:
+    return [{"integration": dom} for dom in ZAPTEC_DEVICE_INTEGRATIONS]
 
 
 def _user_schema(data: dict) -> vol.Schema:
@@ -101,6 +107,12 @@ def _user_schema(data: dict) -> vol.Schema:
                     mode=NumberSelectorMode.BOX,
                 )
             ),
+            vol.Optional(
+                CONF_ZAPTEC_CHARGER_DEVICE_ID,
+                default=data.get(CONF_ZAPTEC_CHARGER_DEVICE_ID),
+            ): DeviceSelector(
+                DeviceSelectorConfig(filter=_zaptec_device_filter())
+            ),
             vol.Required(
                 CONF_CHARGER_POWER_KW,
                 default=data.get(CONF_CHARGER_POWER_KW, DEFAULT_CHARGER_KW),
@@ -137,11 +149,15 @@ class EvAutoSmartChargeConfigFlow(ConfigFlow, domain=DOMAIN):
     ) -> ConfigFlowResult:
         errors: dict[str, str] = {}
         if user_input is not None:
-            await self.async_set_unique_id(
+            zid = user_input.get(CONF_ZAPTEC_CHARGER_DEVICE_ID) or ""
+            uid = (
                 f"{user_input[CONF_PRICE_DEVICE_ID]}_"
                 f"{user_input[CONF_EV1_DEVICE_ID]}_"
                 f"{user_input[CONF_EV2_DEVICE_ID]}"
             )
+            if zid:
+                uid = f"{uid}_{zid}"
+            await self.async_set_unique_id(uid)
             self._abort_if_unique_id_configured()
             return self.async_create_entry(
                 title="EV Auto Smart Charge",
@@ -223,6 +239,12 @@ class EvAutoSmartChargeOptionsFlow(OptionsFlow):
                         step=0.1,
                         mode=NumberSelectorMode.BOX,
                     )
+                ),
+                vol.Optional(
+                    CONF_ZAPTEC_CHARGER_DEVICE_ID,
+                    default=merged.get(CONF_ZAPTEC_CHARGER_DEVICE_ID),
+                ): DeviceSelector(
+                    DeviceSelectorConfig(filter=_zaptec_device_filter())
                 ),
                 vol.Required(
                     CONF_CHARGER_POWER_KW,

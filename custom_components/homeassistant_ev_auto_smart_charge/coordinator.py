@@ -35,14 +35,18 @@ from .const import (
     CONF_PRICE_DEVICE_ID,
     CONF_PRICE_SENSOR,
     CONF_TARGET_SOC_PERCENT,
+    CONF_ZAPTEC_CHARGER_DEVICE_ID,
     DEFAULT_CHARGE_PRIORITY,
     DEFAULT_CHARGER_KW,
     DEFAULT_TARGET_SOC,
     DOMAIN,
     UPDATE_INTERVAL_MIN,
+    ZAPTEC_CALC_PHASES,
+    ZAPTEC_CALC_VOLTAGE_V,
 )
 from .device_resolve import (
     resolve_spot_price_sensor,
+    resolve_zaptec_charger_max_current_entity,
     ResolvedEVDevice,
     entity_ids_for_device,
     is_plugged_in,
@@ -439,6 +443,31 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
     def _options(self) -> dict[str, Any]:
         return {**self.config_entry.data, **self.config_entry.options}
 
+    def _effective_charger_kw(self, opt: dict[str, Any]) -> float:
+        """Manual kW, or Zaptec **Charger max current** × 3 × 230 V / 1000 when configured."""
+
+        manual = float(opt.get(CONF_CHARGER_POWER_KW, DEFAULT_CHARGER_KW))
+        zdev = opt.get(CONF_ZAPTEC_CHARGER_DEVICE_ID)
+        if not zdev or not str(zdev).strip():
+            return manual
+        eid = resolve_zaptec_charger_max_current_entity(
+            self.hass, str(zdev).strip()
+        )
+        if not eid:
+            return manual
+        st = self.hass.states.get(eid)
+        if st is None or st.state in ("unknown", "unavailable", None, ""):
+            return manual
+        try:
+            amps = float(st.state)
+        except (TypeError, ValueError):
+            return manual
+        if amps <= 0:
+            return manual
+        return (
+            amps * float(ZAPTEC_CALC_PHASES) * ZAPTEC_CALC_VOLTAGE_V / 1000.0
+        )
+
     async def _async_update_data(self) -> PlanResult:
         return self._compute_plan()
 
@@ -447,7 +476,7 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
         priority = _normalize_charge_priority(opt.get(CONF_CHARGE_PRIORITY))
         cap1 = float(opt[CONF_EV1_CAPACITY_KWH])
         cap2 = float(opt[CONF_EV2_CAPACITY_KWH])
-        charger_kw = float(opt.get(CONF_CHARGER_POWER_KW, DEFAULT_CHARGER_KW))
+        charger_kw = self._effective_charger_kw(opt)
 
         if charger_kw <= 0:
             return PlanResult(
@@ -804,6 +833,14 @@ def _tracked_entity_ids_for_coordinator(
         eid = opt.get(soc_key)
         if eid and str(eid).strip():
             entities.append(str(eid).strip())
+
+    zc_dev = opt.get(CONF_ZAPTEC_CHARGER_DEVICE_ID)
+    if zc_dev and str(zc_dev).strip():
+        zid = str(zc_dev).strip()
+        entities.extend(entity_ids_for_device(hass, zid))
+        z_amp = resolve_zaptec_charger_max_current_entity(hass, zid)
+        if z_amp:
+            entities.append(z_amp)
 
     out = [e for e in entities if e and str(e).strip()]
     return list(dict.fromkeys(out))

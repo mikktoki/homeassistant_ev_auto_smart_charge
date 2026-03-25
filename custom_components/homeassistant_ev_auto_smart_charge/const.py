@@ -21,6 +21,8 @@ CONF_CHARGE_PRIORITY = "charge_priority"
 CONF_EV1_CAPACITY_KWH = "ev1_capacity_kwh"
 CONF_EV2_CAPACITY_KWH = "ev2_capacity_kwh"
 CONF_CHARGER_POWER_KW = "charger_power_kw"
+# Optional Zaptec charger device (custom_components/zaptec) — kW from charger max-current setpoint
+CONF_ZAPTEC_CHARGER_DEVICE_ID = "zaptec_charger_device_id"
 CONF_TARGET_SOC_PERCENT = "target_soc_percent"
 
 CHARGE_PRIORITY_EV1_FIRST = "ev1_first"
@@ -39,6 +41,11 @@ VW_FAMILY_DEVICE_INTEGRATIONS = (
 )
 # Energi Data Service (HACS) — hourly spot prices (raw_today / raw_tomorrow)
 ENERGI_DATA_SERVICE_INTEGRATIONS = ("energidataservice",)
+ZAPTEC_DEVICE_INTEGRATIONS = ("zaptec",)
+
+# Zaptec AC power estimate: kW ≈ I(A) × phases × V(L-N) / 1000 (see integration README / install limits)
+ZAPTEC_CALC_PHASES = 3
+ZAPTEC_CALC_VOLTAGE_V = 230.0
 
 DEFAULT_CHARGER_KW = 11.0
 DEFAULT_TARGET_SOC = 100.0

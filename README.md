@@ -72,7 +72,8 @@ If you previously used the `ha_charge` custom component: remove that integration
 ## Notes
 
 - This integration **plans only**; it does not start or stop charging. Use automations if you want to act on plan entities (for example the **Cheapest hours (JSON)** sensor).
-- The planner assumes a **single effective charging power** (one shared wallbox or one combined budget). Adjust **Wallbox power (kW)** to match how you charge both cars.
+- The planner assumes a **single effective charging power** (one shared wallbox or one combined budget). Adjust **Wallbox power (kW)** to match how you charge both cars when you are not using Zaptec.
+- **Optional Zaptec** ([custom-components/zaptec](https://github.com/custom-components/zaptec)): in setup or **Configure**, you can select the **Zaptec charger** device (not the installation). The planner then derives kW from the **Charger max current** number entity as \(I \times 3 \times 230 / 1000\). If Zaptec is not selected or the value is unavailable, **Wallbox power (kW)** is used as a fallback.
 
 ## Uninstall
 

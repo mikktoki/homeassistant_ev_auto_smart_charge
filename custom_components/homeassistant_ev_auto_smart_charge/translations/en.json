@@ -3,14 +3,15 @@
     "step": {
       "user": {
         "title": "EV Auto Smart Charge",
-        "description": "Select your Energi Data Service device (hourly spot prices), then the Tesla vehicle device and the Volkswagen-group vehicle device (VW / Škoda / SEAT). The integration picks the price sensor from the EDS device (raw_today / raw_tomorrow). Battery %, charge limit, cable/connector, and location are read from the EV devices. Default capacities: EV1 73 kWh, EV2 58 kWh.",
+        "description": "Select your Energi Data Service device (hourly spot prices), then the Tesla vehicle device and the Volkswagen-group vehicle device (VW / Škoda / SEAT). The integration picks the price sensor from the EDS device (raw_today / raw_tomorrow). Battery %, charge limit, cable/connector, and location are read from the EV devices. Default capacities: EV1 73 kWh, EV2 58 kWh. Optional: pick a Zaptec charger device to derive wallbox kW from its Charger max current (3×230 V×A)/1000; otherwise use manual kW.",
         "data": {
           "price_device_id": "Energi Data Service (device)",
           "ev1_device_id": "Tesla vehicle (device)",
           "ev2_device_id": "Volkswagen-group vehicle (device)",
+          "zaptec_charger_device_id": "Zaptec charger (device, optional)",
           "ev1_capacity_kwh": "EV 1 usable battery capacity (kWh)",
           "ev2_capacity_kwh": "EV 2 usable battery capacity (kWh)",
-          "charger_power_kw": "Wallbox power (kW), combined if one charger",
+          "charger_power_kw": "Wallbox power (kW) if Zaptec is not set or unreadable",
           "target_soc_percent": "Fallback charge target (%) if the car has no charge-limit entity"
         }
       }
@@ -21,9 +22,10 @@
           "title": "Planner settings",
           "data": {
             "charge_priority": "Which EV gets the wallbox first when both need charging",
+            "zaptec_charger_device_id": "Zaptec charger (device, optional)",
             "ev1_capacity_kwh": "EV 1 usable battery capacity (kWh)",
             "ev2_capacity_kwh": "EV 2 usable battery capacity (kWh)",
-            "charger_power_kw": "Wallbox power (kW)",
+            "charger_power_kw": "Wallbox power (kW) if Zaptec is not set or unreadable",
             "target_soc_percent": "Fallback charge target (%) if charge limit is missing on the device"
           }
         }

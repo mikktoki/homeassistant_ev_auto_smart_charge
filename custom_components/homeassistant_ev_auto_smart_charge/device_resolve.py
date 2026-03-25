@@ -291,6 +291,24 @@ def resolve_ev_from_device(
     )
 
 
+def resolve_zaptec_charger_max_current_entity(
+    hass: HomeAssistant, device_id: str
+) -> str | None:
+    """Zaptec : `number` **Charger max current** (`charger_max_current`) on the charger device."""
+
+    registry = er.async_get(hass)
+    entries = _entries_for_device(registry, device_id)
+    for e in entries:
+        if e.domain != "number":
+            continue
+        if (e.translation_key or "").lower() == "charger_max_current":
+            return e.entity_id
+    for e in entries:
+        if e.domain == "number" and "charger_max_current" in e.entity_id.lower():
+            return e.entity_id
+    return None
+
+
 def entity_ids_for_device(hass: HomeAssistant, device_id: str) -> list[str]:
     """All entity ids on a device (for state subscriptions)."""
 
