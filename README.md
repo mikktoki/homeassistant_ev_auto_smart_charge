@@ -71,7 +71,7 @@ If you previously used the `ha_charge` custom component: remove that integration
 
 ## Notes
 
-- This integration **plans only**; it does not start or stop charging. Use automations if you want to act on the `cheapest_hours` attribute.
+- This integration **plans only**; it does not start or stop charging. Use automations if you want to act on plan entities (for example the **Cheapest hours (JSON)** sensor).
 - The planner assumes a **single effective charging power** (one shared wallbox or one combined budget). Adjust **Wallbox power (kW)** to match how you charge both cars.
 
 ## Uninstall

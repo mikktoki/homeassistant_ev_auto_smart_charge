@@ -31,10 +31,42 @@
     }
   },
   "entity": {
+    "binary_sensor": {
+      "ev1_at_home": { "name": "EV 1 at home" },
+      "ev2_at_home": { "name": "EV 2 at home" },
+      "ev1_plugged_in": { "name": "EV 1 cable connected" },
+      "ev2_plugged_in": { "name": "EV 2 cable connected" },
+      "tomorrow_prices_valid": { "name": "Tomorrow prices valid" }
+    },
     "sensor": {
-      "charge_plan": {
-        "name": "Charge plan"
-      }
+      "charge_plan": { "name": "Charge plan" },
+      "ev1_soc": { "name": "EV 1 battery" },
+      "ev2_soc": { "name": "EV 2 battery" },
+      "ev1_target_soc": { "name": "EV 1 charge target" },
+      "ev2_target_soc": { "name": "EV 2 charge target" },
+      "charge_priority": { "name": "Charge priority" },
+      "ev1_planned_kwh": { "name": "EV 1 planned energy" },
+      "ev2_planned_kwh": { "name": "EV 2 planned energy" },
+      "ev1_kwh_needed": { "name": "EV 1 energy needed" },
+      "ev2_kwh_needed": { "name": "EV 2 energy needed" },
+      "total_kwh_needed": { "name": "Total energy needed" },
+      "planned_total_kwh": { "name": "Planned total energy" },
+      "hours_to_charge": { "name": "Hours to charge" },
+      "charger_power_kw": { "name": "Charger power" },
+      "effective_price_per_kwh": { "name": "Effective price per kWh" },
+      "estimated_ev1_cost": { "name": "Estimated EV 1 cost" },
+      "estimated_ev2_cost": { "name": "Estimated EV 2 cost" },
+      "ev1_cheapest_if_alone_cost": { "name": "EV 1 cheapest-if-alone cost" },
+      "ev2_cheapest_if_alone_cost": { "name": "EV 2 cheapest-if-alone cost" },
+      "immediate_charge_ev1_cost": { "name": "Immediate charge EV 1 cost" },
+      "immediate_charge_ev2_cost": { "name": "Immediate charge EV 2 cost" },
+      "immediate_charge_total_cost": { "name": "Immediate charge total cost" },
+      "charging_window_start": { "name": "Charging window start" },
+      "charging_window_end": { "name": "Charging window end" },
+      "charging_schedule_summary": { "name": "Charging schedule" },
+      "price_unit": { "name": "Spot price unit" },
+      "cheapest_hours": { "name": "Cheapest hours (JSON)" },
+      "plan_error": { "name": "Plan error" }
     }
   }
 }

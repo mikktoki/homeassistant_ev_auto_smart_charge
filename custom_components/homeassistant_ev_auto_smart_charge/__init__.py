@@ -18,7 +18,7 @@ from .const import (
 )
 from .coordinator import EvAutoSmartChargeCoordinator, setup_coordinator_state_listener
 
-PLATFORMS: list[Platform] = [Platform.SENSOR]
+PLATFORMS: list[Platform] = [Platform.BINARY_SENSOR, Platform.SENSOR]
 
 
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
