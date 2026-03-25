@@ -151,10 +151,10 @@ def _presence_plug_for_plan(
     resolved: ResolvedEVDevice,
     legacy_home_key: str,
 ) -> tuple[bool | None, bool, bool | None]:
-    """(at_home display, include kWh in plan, plugged display).
+    """(at_home display, unused legacy second value, plugged display).
 
-    Cable connected implies the car is at the wallbox: include it in the cost plan
-    even when GPS/device_tracker still shows *not_home*.
+    Plug/home are for UI/binary sensors only. Cheapest-hour and immediate costs
+    always use full kWh needed to reach target SOC (not gated on cable/home).
     """
 
     plugged = is_plugged_in(hass, resolved.connected_entity_id)
@@ -520,10 +520,10 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
             else 0.0
         )
 
-        ev1_home_disp, inc1, plug1 = _presence_plug_for_plan(
+        ev1_home_disp, _inc1, plug1 = _presence_plug_for_plan(
             self.hass, opt, r1, CONF_EV1_HOME_ENTITY
         )
-        ev2_home_disp, inc2, plug2 = _presence_plug_for_plan(
+        ev2_home_disp, _inc2, plug2 = _presence_plug_for_plan(
             self.hass, opt, r2, CONF_EV2_HOME_ENTITY
         )
 
@@ -557,9 +557,6 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
             )
 
         total_kwh = kwh1 + kwh2
-        ekwh1 = kwh1 if inc1 else 0.0
-        ekwh2 = kwh2 if inc2 else 0.0
-        ekwh_total = ekwh1 + ekwh2
 
         if total_kwh <= 0:
             return PlanResult(
@@ -586,8 +583,8 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
                 ev1_at_home=ev1_home_disp,
                 ev2_at_home=ev2_home_disp,
                 charge_priority=priority,
-                ev1_planned_kwh=ekwh1,
-                ev2_planned_kwh=ekwh2,
+                ev1_planned_kwh=0.0,
+                ev2_planned_kwh=0.0,
                 immediate_ev1_cost=0.0,
                 immediate_ev2_cost=0.0,
                 immediate_total_cost=0.0,
@@ -603,42 +600,6 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
         )
         solo1 = _solo_cheapest_cost_for_need(future, charger_kw, kwh1)
         solo2 = _solo_cheapest_cost_for_need(future, charger_kw, kwh2)
-
-        if ekwh_total <= 0:
-            return PlanResult(
-                ev1_soc=soc1,
-                ev2_soc=soc2,
-                ev1_kwh_needed=kwh1,
-                ev2_kwh_needed=kwh2,
-                total_kwh_needed=total_kwh,
-                hours_to_charge=0,
-                charger_power_kw=charger_kw,
-                selected_slots=[],
-                estimated_cost=0.0,
-                estimated_ev1_cost=0.0,
-                estimated_ev2_cost=0.0,
-                charging_window_start=None,
-                charging_window_end=None,
-                charging_schedule_summary=None,
-                currency=ps.attributes.get("currency") if ps else None,
-                price_unit=ps.attributes.get("unit") if ps else None,
-                tomorrow_valid=ps.attributes.get("tomorrow_valid") if ps else None,
-                error=None,
-                ev1_target_percent=target1,
-                ev2_target_percent=target2,
-                ev1_at_home=ev1_home_disp,
-                ev2_at_home=ev2_home_disp,
-                charge_priority=priority,
-                ev1_planned_kwh=0.0,
-                ev2_planned_kwh=0.0,
-                immediate_ev1_cost=0.0,
-                immediate_ev2_cost=0.0,
-                immediate_total_cost=0.0,
-                ev1_connected=plug1,
-                ev2_connected=plug2,
-                ev1_solo_cheapest_cost=solo1,
-                ev2_solo_cheapest_cost=solo2,
-            )
 
         if not slots:
             return PlanResult(
@@ -665,8 +626,8 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
                 ev1_at_home=ev1_home_disp,
                 ev2_at_home=ev2_home_disp,
                 charge_priority=priority,
-                ev1_planned_kwh=ekwh1,
-                ev2_planned_kwh=ekwh2,
+                ev1_planned_kwh=kwh1,
+                ev2_planned_kwh=kwh2,
                 immediate_ev1_cost=None,
                 immediate_ev2_cost=None,
                 immediate_total_cost=None,
@@ -701,8 +662,8 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
                 ev1_at_home=ev1_home_disp,
                 ev2_at_home=ev2_home_disp,
                 charge_priority=priority,
-                ev1_planned_kwh=ekwh1,
-                ev2_planned_kwh=ekwh2,
+                ev1_planned_kwh=kwh1,
+                ev2_planned_kwh=kwh2,
                 immediate_ev1_cost=None,
                 immediate_ev2_cost=None,
                 immediate_total_cost=None,
@@ -714,10 +675,10 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
 
         future_chrono = sorted(future, key=lambda x: x[0])
         im1, im2, imtot = _sequential_energy_costs(
-            future_chrono, charger_kw, ekwh1, ekwh2, priority
+            future_chrono, charger_kw, kwh1, kwh2, priority
         )
 
-        hours_needed = int(math.ceil(ekwh_total / charger_kw))
+        hours_needed = int(math.ceil(total_kwh / charger_kw))
         sorted_by_price = sorted(future, key=lambda x: x[1])
         chosen = sorted_by_price[:hours_needed]
         chosen.sort(key=lambda x: x[0])
@@ -733,7 +694,7 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
             f"local ({hours_needed} h)"
         )
 
-        rem1, rem2 = ekwh1, ekwh2
+        rem1, rem2 = kwh1, kwh2
         selected: list[dict[str, Any]] = []
         est_cost = 0.0
         ev1_cost = 0.0
@@ -754,9 +715,9 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
                     "ev2_kwh": round(d2, 4),
                 }
             )
-        if ekwh1 <= 1e-12:
+        if kwh1 <= 1e-12:
             ev1_cost = 0.0
-        if ekwh2 <= 1e-12:
+        if kwh2 <= 1e-12:
             ev2_cost = 0.0
 
         return PlanResult(
@@ -783,8 +744,8 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
             ev1_at_home=ev1_home_disp,
             ev2_at_home=ev2_home_disp,
             charge_priority=priority,
-            ev1_planned_kwh=ekwh1,
-            ev2_planned_kwh=ekwh2,
+            ev1_planned_kwh=kwh1,
+            ev2_planned_kwh=kwh2,
             immediate_ev1_cost=im1,
             immediate_ev2_cost=im2,
             immediate_total_cost=imtot,
