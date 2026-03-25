@@ -12,7 +12,7 @@ from homeassistant.components.sensor import (
     SensorEntityDescription,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import PERCENT, UnitOfEnergy, UnitOfPower
+from homeassistant.const import UnitOfEnergy, UnitOfPower
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -145,7 +145,7 @@ def _build_auxiliary_sensors(
             SensorEntityDescription(
                 key="ev1_soc",
                 translation_key="ev1_soc",
-                native_unit_of_measurement=PERCENT,
+                native_unit_of_measurement="%",
                 device_class=SensorDeviceClass.BATTERY,
                 suggested_display_precision=1,
             ),
@@ -156,7 +156,7 @@ def _build_auxiliary_sensors(
             SensorEntityDescription(
                 key="ev2_soc",
                 translation_key="ev2_soc",
-                native_unit_of_measurement=PERCENT,
+                native_unit_of_measurement="%",
                 device_class=SensorDeviceClass.BATTERY,
                 suggested_display_precision=1,
             ),
@@ -167,7 +167,7 @@ def _build_auxiliary_sensors(
             SensorEntityDescription(
                 key="ev1_target_soc",
                 translation_key="ev1_target_soc",
-                native_unit_of_measurement=PERCENT,
+                native_unit_of_measurement="%",
                 suggested_display_precision=1,
             ),
             lambda d: d.ev1_target_percent,
@@ -177,7 +177,7 @@ def _build_auxiliary_sensors(
             SensorEntityDescription(
                 key="ev2_target_soc",
                 translation_key="ev2_target_soc",
-                native_unit_of_measurement=PERCENT,
+                native_unit_of_measurement="%",
                 suggested_display_precision=1,
             ),
             lambda d: d.ev2_target_percent,
