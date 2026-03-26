@@ -12,6 +12,10 @@
           "ev1_capacity_kwh": "EV 1 usable battery capacity (kWh)",
           "ev2_capacity_kwh": "EV 2 usable battery capacity (kWh)",
           "charger_power_kw": "Wallbox power (kW) if Zaptec is not set or unreadable",
+          "charge_order_mode": "Manual priority or automatic economical order",
+          "charge_priority": "Manual EV priority when order mode is manual",
+          "ev1_done_by": "EV 1 done by (date and time)",
+          "ev2_done_by": "EV 2 done by (date and time)",
           "target_soc_percent": "Fallback charge target (%) if the car has no charge-limit entity"
         }
       }
@@ -22,10 +26,13 @@
           "title": "Planner settings",
           "data": {
             "charge_priority": "Which EV gets the wallbox first when both need charging",
+            "charge_order_mode": "Manual priority or automatic economical order",
             "zaptec_charger_device_id": "Zaptec charger (device, optional)",
             "ev1_capacity_kwh": "EV 1 usable battery capacity (kWh)",
             "ev2_capacity_kwh": "EV 2 usable battery capacity (kWh)",
             "charger_power_kw": "Wallbox power (kW) if Zaptec is not set or unreadable",
+            "ev1_done_by": "EV 1 done by (date and time)",
+            "ev2_done_by": "EV 2 done by (date and time)",
             "target_soc_percent": "Fallback charge target (%) if charge limit is missing on the device"
           }
         }

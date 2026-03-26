@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 import voluptuous as vol
 
 from homeassistant.config_entries import (
@@ -12,6 +14,8 @@ from homeassistant.config_entries import (
 )
 from homeassistant.core import callback
 from homeassistant.helpers.selector import (
+    DateTimeSelector,
+    DateTimeSelectorConfig,
     DeviceSelector,
     DeviceSelectorConfig,
     NumberSelector,
@@ -21,22 +25,29 @@ from homeassistant.helpers.selector import (
     SelectSelectorConfig,
     SelectSelectorMode,
 )
+from homeassistant.util import dt as dt_util
 
 from .const import (
+    CHARGE_ORDER_MODE_ECONOMICAL,
+    CHARGE_ORDER_MODE_MANUAL,
     CHARGE_PRIORITY_BALANCED,
     CHARGE_PRIORITY_EV1_FIRST,
     CHARGE_PRIORITY_EV2_FIRST,
     CONF_CHARGER_POWER_KW,
+    CONF_CHARGE_ORDER_MODE,
     CONF_CHARGE_PRIORITY,
     CONF_EV1_CAPACITY_KWH,
+    CONF_EV1_DONE_BY,
     CONF_EV1_DEVICE_ID,
     CONF_EV2_CAPACITY_KWH,
+    CONF_EV2_DONE_BY,
     CONF_EV2_DEVICE_ID,
     CONF_PRICE_DEVICE_ID,
     CONF_TARGET_SOC_PERCENT,
     CONF_ZAPTEC_CHARGER_DEVICE_ID,
     ENERGI_DATA_SERVICE_INTEGRATIONS,
     DEFAULT_CHARGE_PRIORITY,
+    DEFAULT_CHARGE_ORDER_MODE,
     DEFAULT_CHARGER_KW,
     DEFAULT_EV1_CAPACITY_KWH,
     DEFAULT_EV2_CAPACITY_KWH,
@@ -62,6 +73,18 @@ def _energi_device_filter() -> list[dict[str, str]]:
 
 def _zaptec_device_filter() -> list[dict[str, str]]:
     return [{"integration": dom} for dom in ZAPTEC_DEVICE_INTEGRATIONS]
+
+
+def _default_deadline_today(hour: int) -> str:
+    now = dt_util.now()
+    base = now.replace(hour=hour, minute=0, second=0, microsecond=0)
+    return base.isoformat()
+
+
+def _default_deadline_tomorrow(hour: int) -> str:
+    now = dt_util.now()
+    base = now.replace(hour=hour, minute=0, second=0, microsecond=0)
+    return dt_util.as_local(base + timedelta(days=1)).isoformat()
 
 
 def _user_schema(data: dict) -> vol.Schema:
@@ -124,6 +147,54 @@ def _user_schema(data: dict) -> vol.Schema:
                     mode=NumberSelectorMode.BOX,
                 )
             ),
+            vol.Required(
+                CONF_CHARGE_ORDER_MODE,
+                default=data.get(CONF_CHARGE_ORDER_MODE, DEFAULT_CHARGE_ORDER_MODE),
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=[
+                        {
+                            "value": CHARGE_ORDER_MODE_MANUAL,
+                            "label": "Manual priority",
+                        },
+                        {
+                            "value": CHARGE_ORDER_MODE_ECONOMICAL,
+                            "label": "Automatic economical",
+                        },
+                    ],
+                    mode=SelectSelectorMode.DROPDOWN,
+                )
+            ),
+            vol.Required(
+                CONF_CHARGE_PRIORITY,
+                default=data.get(CONF_CHARGE_PRIORITY, DEFAULT_CHARGE_PRIORITY),
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=[
+                        {
+                            "value": CHARGE_PRIORITY_EV1_FIRST,
+                            "label": "EV 1 (Tesla) first",
+                        },
+                        {
+                            "value": CHARGE_PRIORITY_EV2_FIRST,
+                            "label": "EV 2 (VW family) first",
+                        },
+                        {
+                            "value": CHARGE_PRIORITY_BALANCED,
+                            "label": "Balanced (by kWh)",
+                        },
+                    ],
+                    mode=SelectSelectorMode.DROPDOWN,
+                )
+            ),
+            vol.Required(
+                CONF_EV1_DONE_BY,
+                default=data.get(CONF_EV1_DONE_BY, _default_deadline_today(22)),
+            ): DateTimeSelector(DateTimeSelectorConfig()),
+            vol.Required(
+                CONF_EV2_DONE_BY,
+                default=data.get(CONF_EV2_DONE_BY, _default_deadline_tomorrow(8)),
+            ): DateTimeSelector(DateTimeSelectorConfig()),
             vol.Required(
                 CONF_TARGET_SOC_PERCENT,
                 default=data.get(CONF_TARGET_SOC_PERCENT, DEFAULT_TARGET_SOC),
@@ -191,6 +262,26 @@ class EvAutoSmartChargeOptionsFlow(OptionsFlow):
         schema = vol.Schema(
             {
                 vol.Required(
+                    CONF_CHARGE_ORDER_MODE,
+                    default=merged.get(
+                        CONF_CHARGE_ORDER_MODE, DEFAULT_CHARGE_ORDER_MODE
+                    ),
+                ): SelectSelector(
+                    SelectSelectorConfig(
+                        options=[
+                            {
+                                "value": CHARGE_ORDER_MODE_MANUAL,
+                                "label": "Manual priority",
+                            },
+                            {
+                                "value": CHARGE_ORDER_MODE_ECONOMICAL,
+                                "label": "Automatic economical",
+                            },
+                        ],
+                        mode=SelectSelectorMode.DROPDOWN,
+                    )
+                ),
+                vol.Required(
                     CONF_CHARGE_PRIORITY,
                     default=merged.get(
                         CONF_CHARGE_PRIORITY, DEFAULT_CHARGE_PRIORITY
@@ -257,6 +348,18 @@ class EvAutoSmartChargeOptionsFlow(OptionsFlow):
                         mode=NumberSelectorMode.BOX,
                     )
                 ),
+                vol.Required(
+                    CONF_EV1_DONE_BY,
+                    default=merged.get(
+                        CONF_EV1_DONE_BY, _default_deadline_today(22)
+                    ),
+                ): DateTimeSelector(DateTimeSelectorConfig()),
+                vol.Required(
+                    CONF_EV2_DONE_BY,
+                    default=merged.get(
+                        CONF_EV2_DONE_BY, _default_deadline_tomorrow(8)
+                    ),
+                ): DateTimeSelector(DateTimeSelectorConfig()),
                 vol.Required(
                     CONF_TARGET_SOC_PERCENT,
                     default=merged.get(CONF_TARGET_SOC_PERCENT, DEFAULT_TARGET_SOC),

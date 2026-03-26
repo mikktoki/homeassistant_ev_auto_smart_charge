@@ -19,16 +19,21 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    CHARGE_ORDER_MODE_ECONOMICAL,
+    CHARGE_ORDER_MODE_MANUAL,
     CHARGE_PRIORITY_BALANCED,
     CHARGE_PRIORITY_EV1_FIRST,
     CHARGE_PRIORITY_EV2_FIRST,
     CONF_CHARGER_POWER_KW,
+    CONF_CHARGE_ORDER_MODE,
     CONF_CHARGE_PRIORITY,
     CONF_EV1_CAPACITY_KWH,
+    CONF_EV1_DONE_BY,
     CONF_EV1_DEVICE_ID,
     CONF_EV1_HOME_ENTITY,
     CONF_EV1_SOC_SENSOR,
     CONF_EV2_CAPACITY_KWH,
+    CONF_EV2_DONE_BY,
     CONF_EV2_DEVICE_ID,
     CONF_EV2_HOME_ENTITY,
     CONF_EV2_SOC_SENSOR,
@@ -37,6 +42,7 @@ from .const import (
     CONF_TARGET_SOC_PERCENT,
     CONF_ZAPTEC_CHARGER_DEVICE_ID,
     DEFAULT_CHARGE_PRIORITY,
+    DEFAULT_CHARGE_ORDER_MODE,
     DEFAULT_CHARGER_KW,
     DEFAULT_TARGET_SOC,
     DOMAIN,
@@ -237,6 +243,32 @@ def _normalize_charge_priority(raw: Any) -> str:
     return CHARGE_PRIORITY_BALANCED
 
 
+def _normalize_charge_order_mode(raw: Any) -> str:
+    v = str(raw or "").strip().lower().replace("-", "_")
+    if v == CHARGE_ORDER_MODE_ECONOMICAL:
+        return CHARGE_ORDER_MODE_ECONOMICAL
+    return CHARGE_ORDER_MODE_MANUAL
+
+
+def _default_done_by_today(hour: int) -> datetime:
+    now = dt_util.now()
+    return now.replace(hour=hour, minute=0, second=0, microsecond=0)
+
+
+def _default_done_by_tomorrow(hour: int) -> datetime:
+    base = _default_done_by_today(hour)
+    return dt_util.as_local(base + timedelta(days=1))
+
+
+def _parse_done_by(raw: Any, default_dt: datetime) -> datetime:
+    parsed = _parse_hour(raw)
+    if parsed is None:
+        return default_dt
+    if parsed.tzinfo is None:
+        return dt_util.as_local(parsed.replace(tzinfo=dt_util.DEFAULT_TIME_ZONE))
+    return dt_util.as_local(parsed)
+
+
 def _state_indicates_home(state: State) -> bool | None:
     domain = state.domain
     s = (state.state or "").lower()
@@ -336,6 +368,127 @@ def _sequential_energy_costs(
         c1 += price * d1
         c2 += price * d2
     return (c1, c2, c1 + c2)
+
+
+def _hour_eligible(hour_start: datetime, done_by: datetime) -> bool:
+    return (hour_start + timedelta(hours=1)) <= done_by
+
+
+def _choose_effective_priority(
+    mode: str,
+    future_hours: list[tuple[datetime, float]],
+    charger_kw: float,
+    kwh1: float,
+    kwh2: float,
+    done_by1: datetime,
+    done_by2: datetime,
+    manual_priority: str,
+) -> str:
+    if mode != CHARGE_ORDER_MODE_ECONOMICAL:
+        return manual_priority
+
+    ev1_first_cost, _, _, _ = _build_feasible_schedule(
+        future_hours, charger_kw, kwh1, kwh2, done_by1, done_by2, CHARGE_PRIORITY_EV1_FIRST
+    )
+    ev2_first_cost, _, _, _ = _build_feasible_schedule(
+        future_hours, charger_kw, kwh1, kwh2, done_by1, done_by2, CHARGE_PRIORITY_EV2_FIRST
+    )
+    if ev1_first_cost is None and ev2_first_cost is None:
+        return manual_priority
+    if ev1_first_cost is None:
+        return CHARGE_PRIORITY_EV2_FIRST
+    if ev2_first_cost is None:
+        return CHARGE_PRIORITY_EV1_FIRST
+    return CHARGE_PRIORITY_EV1_FIRST if ev1_first_cost <= ev2_first_cost else CHARGE_PRIORITY_EV2_FIRST
+
+
+def _build_feasible_schedule(
+    future_hours: list[tuple[datetime, float]],
+    charger_kw: float,
+    kwh1: float,
+    kwh2: float,
+    done_by1: datetime,
+    done_by2: datetime,
+    priority: str,
+) -> tuple[float | None, list[dict[str, Any]], float, float]:
+    """Return (total_cost, selected_slots, rem1, rem2) honoring per-EV deadlines."""
+    rem1 = max(0.0, kwh1)
+    rem2 = max(0.0, kwh2)
+    if rem1 <= 1e-12 and rem2 <= 1e-12:
+        return (0.0, [], 0.0, 0.0)
+
+    hours_by_price = sorted(future_hours, key=lambda x: x[1])
+    total_cost = 0.0
+    selected: list[dict[str, Any]] = []
+
+    for hour_start, price in hours_by_price:
+        if rem1 <= 1e-9 and rem2 <= 1e-9:
+            break
+        eligible1 = _hour_eligible(hour_start, done_by1)
+        eligible2 = _hour_eligible(hour_start, done_by2)
+        if not eligible1 and not eligible2:
+            continue
+
+        future_after = [h for h, _p in future_hours if h > hour_start]
+        cap1_future = (
+            sum(1 for h in future_after if _hour_eligible(h, done_by1)) * charger_kw
+        )
+        cap2_future = (
+            sum(1 for h in future_after if _hour_eligible(h, done_by2)) * charger_kw
+        )
+        must1 = max(0.0, rem1 - cap1_future) if eligible1 else 0.0
+        must2 = max(0.0, rem2 - cap2_future) if eligible2 else 0.0
+        if must1 + must2 > charger_kw + 1e-9:
+            return (None, [], rem1, rem2)
+
+        d1 = min(must1, rem1)
+        d2 = min(must2, rem2)
+        cap_left = charger_kw - d1 - d2
+        if cap_left > 1e-12:
+            if priority == CHARGE_PRIORITY_EV1_FIRST:
+                if eligible1:
+                    add = min(cap_left, rem1 - d1)
+                    d1 += add
+                    cap_left -= add
+                if cap_left > 1e-12 and eligible2:
+                    d2 += min(cap_left, rem2 - d2)
+            elif priority == CHARGE_PRIORITY_EV2_FIRST:
+                if eligible2:
+                    add = min(cap_left, rem2 - d2)
+                    d2 += add
+                    cap_left -= add
+                if cap_left > 1e-12 and eligible1:
+                    d1 += min(cap_left, rem1 - d1)
+            else:
+                left1 = (rem1 - d1) if eligible1 else 0.0
+                left2 = (rem2 - d2) if eligible2 else 0.0
+                total_left = left1 + left2
+                if total_left > 1e-12:
+                    add1 = min(left1, cap_left * left1 / total_left)
+                    add2 = min(left2, cap_left - add1)
+                    d1 += add1
+                    d2 += add2
+
+        rem1 -= d1
+        rem2 -= d2
+        delivered = d1 + d2
+        if delivered > 1e-12:
+            total_cost += delivered * price
+            selected.append(
+                {
+                    "hour": hour_start.isoformat(),
+                    "price": price,
+                    "energy_kwh": round(delivered, 4),
+                    "ev1_kwh": round(d1, 4),
+                    "ev2_kwh": round(d2, 4),
+                }
+            )
+
+    if rem1 > 1e-6 or rem2 > 1e-6:
+        return (None, [], rem1, rem2)
+
+    selected.sort(key=lambda x: x["hour"])
+    return (total_cost, selected, rem1, rem2)
 
 
 def _solo_cheapest_cost_for_need(
@@ -474,9 +627,18 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
     def _compute_plan(self) -> PlanResult:
         opt = self._options()
         priority = _normalize_charge_priority(opt.get(CONF_CHARGE_PRIORITY))
+        order_mode = _normalize_charge_order_mode(
+            opt.get(CONF_CHARGE_ORDER_MODE, DEFAULT_CHARGE_ORDER_MODE)
+        )
         cap1 = float(opt[CONF_EV1_CAPACITY_KWH])
         cap2 = float(opt[CONF_EV2_CAPACITY_KWH])
         charger_kw = self._effective_charger_kw(opt)
+        done_by1 = _parse_done_by(
+            opt.get(CONF_EV1_DONE_BY), _default_done_by_today(22)
+        )
+        done_by2 = _parse_done_by(
+            opt.get(CONF_EV2_DONE_BY), _default_done_by_tomorrow(8)
+        )
 
         if charger_kw <= 0:
             return PlanResult(
@@ -624,8 +786,25 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
         slots = _merge_price_slots(self.hass, self.price_sensor)
         now = dt_util.now()
         window_start = now.replace(minute=0, second=0, microsecond=0)
+        latest_done_by = max(done_by1, done_by2)
         future = (
-            [(h, p) for h, p in slots if h >= window_start] if slots else []
+            [
+                (h, p)
+                for h, p in slots
+                if h >= window_start and (h + timedelta(hours=1)) <= latest_done_by
+            ]
+            if slots
+            else []
+        )
+        effective_priority = _choose_effective_priority(
+            order_mode,
+            future,
+            charger_kw,
+            kwh1,
+            kwh2,
+            done_by1,
+            done_by2,
+            priority,
         )
         solo1 = _solo_cheapest_cost_for_need(future, charger_kw, kwh1)
         solo2 = _solo_cheapest_cost_for_need(future, charger_kw, kwh2)
@@ -654,7 +833,7 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
                 ev2_target_percent=target2,
                 ev1_at_home=ev1_home_disp,
                 ev2_at_home=ev2_home_disp,
-                charge_priority=priority,
+                charge_priority=effective_priority,
                 ev1_planned_kwh=kwh1,
                 ev2_planned_kwh=kwh2,
                 immediate_ev1_cost=None,
@@ -685,12 +864,12 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
                 currency=ps.attributes.get("currency") if ps else None,
                 price_unit=ps.attributes.get("unit") if ps else None,
                 tomorrow_valid=ps.attributes.get("tomorrow_valid") if ps else None,
-                error="No future price hours in raw data",
+                error="No future price hours before configured done-by deadlines",
                 ev1_target_percent=target1,
                 ev2_target_percent=target2,
                 ev1_at_home=ev1_home_disp,
                 ev2_at_home=ev2_home_disp,
-                charge_priority=priority,
+                charge_priority=effective_priority,
                 ev1_planned_kwh=kwh1,
                 ev2_planned_kwh=kwh2,
                 immediate_ev1_cost=None,
@@ -704,50 +883,69 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
 
         future_chrono = sorted(future, key=lambda x: x[0])
         im1, im2, imtot = _sequential_energy_costs(
-            future_chrono, charger_kw, kwh1, kwh2, priority
+            future_chrono, charger_kw, kwh1, kwh2, effective_priority
         )
-
-        hours_needed = int(math.ceil(total_kwh / charger_kw))
-        sorted_by_price = sorted(future, key=lambda x: x[1])
-        chosen = sorted_by_price[:hours_needed]
-        chosen.sort(key=lambda x: x[0])
-
-        first_h, _ = chosen[0]
-        last_h, _ = chosen[-1]
-        start_local = dt_util.as_local(first_h)
-        end_local = dt_util.as_local(last_h) + timedelta(hours=1)
-        window_start_iso = start_local.isoformat()
-        window_end_iso = end_local.isoformat()
-        schedule_summary = (
-            f"{start_local.strftime('%a %Y-%m-%d %H:%M')}–{end_local.strftime('%H:%M')} "
-            f"local ({hours_needed} h)"
+        est_cost, selected, rem1, rem2 = _build_feasible_schedule(
+            future, charger_kw, kwh1, kwh2, done_by1, done_by2, effective_priority
         )
+        if est_cost is None or not selected:
+            return PlanResult(
+                ev1_soc=soc1,
+                ev2_soc=soc2,
+                ev1_kwh_needed=kwh1,
+                ev2_kwh_needed=kwh2,
+                total_kwh_needed=total_kwh,
+                hours_to_charge=0,
+                charger_power_kw=charger_kw,
+                selected_slots=[],
+                estimated_cost=None,
+                estimated_ev1_cost=None,
+                estimated_ev2_cost=None,
+                charging_window_start=None,
+                charging_window_end=None,
+                charging_schedule_summary=None,
+                currency=ps.attributes.get("currency") if ps else None,
+                price_unit=ps.attributes.get("unit") if ps else None,
+                tomorrow_valid=ps.attributes.get("tomorrow_valid") if ps else None,
+                error=(
+                    "Unable to satisfy one or both done-by deadlines with available "
+                    "price hours and charger power"
+                ),
+                ev1_target_percent=target1,
+                ev2_target_percent=target2,
+                ev1_at_home=ev1_home_disp,
+                ev2_at_home=ev2_home_disp,
+                charge_priority=effective_priority,
+                ev1_planned_kwh=max(0.0, kwh1 - rem1),
+                ev2_planned_kwh=max(0.0, kwh2 - rem2),
+                immediate_ev1_cost=im1,
+                immediate_ev2_cost=im2,
+                immediate_total_cost=imtot,
+                ev1_connected=plug1,
+                ev2_connected=plug2,
+                ev1_solo_cheapest_cost=solo1,
+                ev2_solo_cheapest_cost=solo2,
+            )
 
-        rem1, rem2 = kwh1, kwh2
-        selected: list[dict[str, Any]] = []
-        est_cost = 0.0
-        ev1_cost = 0.0
-        ev2_cost = 0.0
-        for h, p in chosen:
-            d1, d2, rem1, rem2 = _deliver_one_hour_kwh(
-                rem1, rem2, charger_kw, priority
+        first_h = dt_util.parse_datetime(selected[0]["hour"])
+        last_h = dt_util.parse_datetime(selected[-1]["hour"])
+        hours_needed = len(selected)
+        if first_h is None or last_h is None:
+            window_start_iso = None
+            window_end_iso = None
+            schedule_summary = None
+        else:
+            start_local = dt_util.as_local(first_h)
+            end_local = dt_util.as_local(last_h) + timedelta(hours=1)
+            window_start_iso = start_local.isoformat()
+            window_end_iso = end_local.isoformat()
+            schedule_summary = (
+                f"{start_local.strftime('%a %Y-%m-%d %H:%M')}–{end_local.strftime('%H:%M')} "
+                f"local ({hours_needed} h)"
             )
-            ev1_cost += p * d1
-            ev2_cost += p * d2
-            est_cost += p * (d1 + d2)
-            selected.append(
-                {
-                    "hour": h.isoformat(),
-                    "price": p,
-                    "energy_kwh": d1 + d2,
-                    "ev1_kwh": round(d1, 4),
-                    "ev2_kwh": round(d2, 4),
-                }
-            )
-        if kwh1 <= 1e-12:
-            ev1_cost = 0.0
-        if kwh2 <= 1e-12:
-            ev2_cost = 0.0
+
+        ev1_cost = sum(float(s["price"]) * float(s["ev1_kwh"]) for s in selected)
+        ev2_cost = sum(float(s["price"]) * float(s["ev2_kwh"]) for s in selected)
 
         return PlanResult(
             ev1_soc=soc1,
@@ -772,9 +970,9 @@ class EvAutoSmartChargeCoordinator(DataUpdateCoordinator[PlanResult]):
             ev2_target_percent=target2,
             ev1_at_home=ev1_home_disp,
             ev2_at_home=ev2_home_disp,
-            charge_priority=priority,
-            ev1_planned_kwh=kwh1,
-            ev2_planned_kwh=kwh2,
+            charge_priority=effective_priority,
+            ev1_planned_kwh=max(0.0, kwh1 - rem1),
+            ev2_planned_kwh=max(0.0, kwh2 - rem2),
             immediate_ev1_cost=im1,
             immediate_ev2_cost=im2,
             immediate_total_cost=imtot,
