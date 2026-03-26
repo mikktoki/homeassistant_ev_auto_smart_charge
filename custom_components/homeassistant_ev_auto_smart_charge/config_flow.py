@@ -213,7 +213,7 @@ def _user_schema(data: dict) -> vol.Schema:
 class EvAutoSmartChargeConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle UI setup."""
 
-    VERSION = 3
+    VERSION = 4
 
     async def async_step_user(
         self, user_input: dict | None = None

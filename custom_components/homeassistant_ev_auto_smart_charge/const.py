@@ -1,7 +1,7 @@
 """Constants for homeassistant_ev_auto_smart_charge."""
 
 # Semantic version for HACS / Home Assistant (must match manifest.json "version").
-INTEGRATION_VERSION = "0.0.11"
+INTEGRATION_VERSION = "0.0.18"
 
 DOMAIN = "homeassistant_ev_auto_smart_charge"
 
@@ -53,7 +53,7 @@ ZAPTEC_CALC_PHASES = 3
 ZAPTEC_CALC_VOLTAGE_V = 230.0
 
 DEFAULT_CHARGER_KW = 11.0
-DEFAULT_TARGET_SOC = 100.0
+DEFAULT_TARGET_SOC = 80.0
 DEFAULT_CHARGE_PRIORITY = CHARGE_PRIORITY_BALANCED
 DEFAULT_CHARGE_ORDER_MODE = CHARGE_ORDER_MODE_MANUAL
 DEFAULT_EV1_CAPACITY_KWH = 73.0
